@@ -1,0 +1,15 @@
+# Environment variables (Sensitive)
+.env
+
+# Virtual Environment
+myvenv/
+venv/
+ENV/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Local IDE settings
+.vscode/
+.idea/
