@@ -1,8 +1,6 @@
 import uuid
 import streamlit as st
-from backend.langgraph_backend import chatbot
-from backend.langgraph_backend import model
-
+from backend.langgraph_backend import chatbot, model, checkpointer
 
 def generate_thread():
     thread_id = uuid.uuid4()
@@ -30,3 +28,11 @@ def reset_state():
     st.session_state['thread_id'] = thread_id
     add_threads(thread_id, title="New Chat")
     st.session_state['message_history'] = []
+
+
+def retrieve_thread():
+    all_threads = set()
+    for checkpoint in checkpointer.list(None):
+        all_threads.add(checkpoint['config']['configurable']['thread_id']) 
+
+    return list(all_threads)

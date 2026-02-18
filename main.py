@@ -2,7 +2,7 @@ import streamlit as st
 from backend.langgraph_backend import chatbot  
 from langchain_core.messages import HumanMessage, AIMessage
 import uuid
-from utils import generate_chat_title, generate_thread, add_threads, reset_state, load_conversation
+from utils import generate_chat_title, generate_thread, add_threads, reset_state, load_conversation, retrieve_thread
 
 
 
@@ -17,7 +17,7 @@ if "message_history" not in st.session_state:
     st.session_state['message_history'] = []
 
 if "chat_threads" not in st.session_state:
-    st.session_state['chat_threads'] = []
+    st.session_state['chat_threads'] = retrieve_thread()
 
 add_threads(st.session_state['thread_id'])
 
