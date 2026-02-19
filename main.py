@@ -1,4 +1,8 @@
+from dotenv import load_dotenv
 import streamlit as st
+import os
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
+
 from backend.langgraph_backend import chatbot  
 from langchain_core.messages import HumanMessage, AIMessage
 import uuid
@@ -65,7 +69,9 @@ if user_input:
     with st.chat_message('user'):
         st.write(user_input) 
 
-    CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}
+    CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']},
+              'metadata': {'thread_id': st.session_state['thread_id']},
+              'run_name': 'chat_run'}
 
     with st.chat_message("assistant"):
         def ai_only_stream():

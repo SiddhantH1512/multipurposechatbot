@@ -33,6 +33,6 @@ def reset_state():
 def retrieve_thread():
     all_threads = set()
     for checkpoint in checkpointer.list(None):
-        all_threads.add(checkpoint['config']['configurable']['thread_id']) 
+        all_threads.add(checkpoint.config['configurable']['thread_id']) 
 
     return list(all_threads)
