@@ -6,7 +6,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 from backend.langgraph_backend import chatbot  
 from langchain_core.messages import HumanMessage, AIMessage
 import uuid
-from utils import generate_chat_title, generate_thread, add_threads, reset_state, load_conversation, retrieve_thread
+from backend.thread_service import generate_chat_title, generate_thread, add_threads, reset_state, load_conversation, retrieve_thread
 
 
 
