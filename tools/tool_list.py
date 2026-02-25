@@ -1,7 +1,10 @@
+from typing import Any, Dict, Optional
+
 import requests
+from backend.thread_service import _THREAD_METADATA, _THREAD_RETRIEVERS
 from config import Config
 from schemas.email_schema import EmailExtraction
-from utils import ChatGrokModel
+from backend.models import ChatGrokModel, ChatGeminiModel, ChatOllamaModel
 from prompts.email_prompts import email_prompt_template
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
@@ -44,8 +47,13 @@ def calculator(first_num: float, second_num: float, operation: str) -> dict:
             result = first_num / second_num
         else:
             return {"error": f"Unsupported operation '{operation}'"}
-        
-        return {"first_num": first_num, "second_num": second_num, "operation": operation, "result": result}
+
+        return {
+            "first_num": first_num,
+            "second_num": second_num,
+            "operation": operation,
+            "result": result,
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -56,13 +64,47 @@ def get_stock_price(symbol: str) -> dict:
     Fetch latest stock price for a given symbol (e.g. 'AAPL', 'TSLA') 
     using Alpha Vantage with API key in the URL.
     """
-    url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={Config.ALPHA_VANTAGE_API_KEY}"
+    url = (
+        "https://www.alphavantage.co/query"
+        f"?function=GLOBAL_QUOTE&symbol={symbol}&apikey=C9PE94QUEW9VWGFM"
+    )
     r = requests.get(url)
     return r.json()
 
 
+def _get_retriever(thread_id: Optional[str]):
+    """Fetch the retriever for a thread if available."""
+    if thread_id and thread_id in _THREAD_RETRIEVERS:
+        return _THREAD_RETRIEVERS[thread_id]
+    return None
 
-all_tools = [email_action_extractor, calculator, get_stock_price, search]
+@tool
+def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
+    """
+    Retrieve relevant information from the uploaded PDF for this chat thread.
+    Always include the thread_id when calling this tool.
+    """
+    retriever = _get_retriever(thread_id)
+    if retriever is None:
+        return {
+            "error": "No document indexed for this chat. Upload a PDF first.",
+            "query": query,
+        }
+
+    result = retriever.invoke(query)
+    context = [doc.page_content for doc in result]
+    metadata = [doc.metadata for doc in result]
+
+    return {
+        "query": query,
+        "context": context,
+        "metadata": metadata,
+        "source_file": _THREAD_METADATA.get(str(thread_id), {}).get("filename"),
+    }
+
+
+tools = [search, get_stock_price, calculator, rag_tool, email_action_extractor]
+
 
 
 
