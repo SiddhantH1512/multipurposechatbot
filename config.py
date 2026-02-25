@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", None)
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", None)
-    MODEL_NAME = "llama-3.3-70b-versatile"
+    MODEL_NAME = "llama-3.1-8b-instant"
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", None)
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", None)
     LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", None)

@@ -38,3 +38,36 @@ def retrieve_thread():
         all_threads.add(checkpoint.config['configurable']['thread_id']) 
 
     return list(all_threads)
+
+def delete_thread(thread_id):
+    """
+    Permanently delete all checkpoints for a given thread_id
+    and remove it from session state tracking
+    """
+    # 1. Delete from SQLite checkpointer
+    try:
+        # SqliteSaver uses table 'checkpoints' by default
+        conn = checkpointer.conn
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM checkpoints WHERE thread_id = ?",
+            (str(thread_id),)
+        )
+        conn.commit()
+        
+        # Optional: also clean up writes table if you're using it
+        cursor.execute(
+            "DELETE FROM writes WHERE thread_id = ?",
+            (str(thread_id),)
+        )
+        conn.commit()
+        
+    except Exception as e:
+        print(f"Error deleting checkpoints: {e}")
+        # You might want to show error in UI instead of just print
+
+    # 2. Remove from session state (safe even if not present)
+    if thread_id in st.session_state.get('chat_threads', []):
+        st.session_state['chat_threads'].remove(thread_id)
+    
+    st.session_state['chat_titles'].pop(thread_id, None)
