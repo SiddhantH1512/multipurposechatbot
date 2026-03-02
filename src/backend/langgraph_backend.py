@@ -13,15 +13,16 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langchain_ollama import OllamaEmbeddings
-# from config import Config
+from langchain_community.embeddings import OllamaEmbeddings
+from src.database.init_db import initialize_db
 from langgraph.prebuilt import ToolNode, tools_condition
-from backend.models import ChatGrokModel, ChatGeminiModel, ChatOllamaModel
-from tools.tool_list import tools
-from backend.thread_service import _THREAD_METADATA, _THREAD_RETRIEVERS
-from langchain_mcp_adapters.client import MultiServerMCPClient
+from src.models import ChatGrokModel, ChatGeminiModel
+from src.tools.tool_list import tools
+# from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_community.embeddings import HuggingFaceEmbeddings
 import sqlite3
 
+initialize_db()
 load_dotenv()
 
 
@@ -29,7 +30,18 @@ load_dotenv()
 # 1. LLM + embeddings
 # -------------------
 model = ChatGrokModel()
-embeddings = OllamaEmbeddings(model="nomic-embed-text")
+
+
+embeddings = HuggingFaceEmbeddings(
+    model_name="nomic-ai/nomic-embed-text-v1.5",
+    model_kwargs={
+        "device": "mps",               # Use Apple GPU acceleration
+        "trust_remote_code": True,     # Required for this model
+    },
+    encode_kwargs={
+        "normalize_embeddings": True,  # Good practice for cosine similarity
+    },
+)
 llm_with_tools = model.bind_tools(tools)
 
 
@@ -55,17 +67,30 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
         )
         chunks = splitter.split_documents(docs)
 
-        vector_store = FAISS.from_documents(chunks, embeddings)
-        retriever = vector_store.as_retriever(
-            search_type="similarity", search_kwargs={"k": 4}
-        )
+        index_dir = "faiss_indexes"
+        os.makedirs(index_dir, exist_ok=True)
+        index_path = os.path.join(index_dir, f"faiss_{thread_id}")
 
-        _THREAD_RETRIEVERS[str(thread_id)] = retriever
-        _THREAD_METADATA[str(thread_id)] = {
-            "filename": filename or os.path.basename(temp_path),
-            "documents": len(docs),
-            "chunks": len(chunks),
-        }
+        vector_store = FAISS.from_documents(chunks, embeddings)
+        vector_store.save_local(index_path)
+
+        retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+
+        conn = sqlite3.connect("chatbot.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO thread_metadata (thread_id, filename, documents, chunks, index_path)
+            VALUES (?, ?, ?, ?, ?)
+        """, (str(thread_id), filename or os.path.basename(temp_path), len(docs), len(chunks), index_path))
+        conn.commit()
+        conn.close()
+
+        # _THREAD_RETRIEVERS[str(thread_id)] = retriever
+        # _THREAD_METADATA[str(thread_id)] = {
+        #     "filename": filename or os.path.basename(temp_path),
+        #     "documents": len(docs),
+        #     "chunks": len(chunks),
+        # }
 
         return {
             "filename": filename or os.path.basename(temp_path),

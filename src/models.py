@@ -1,8 +1,8 @@
 # backend/models.py
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
-from config import Config
+# from langchain_ollama import ChatOllama
+from src.config import Config
 
 def ChatGrokModel():
     return ChatGroq(
@@ -19,10 +19,10 @@ def ChatGeminiModel():
         max_retries=3
     )
 
-def ChatOllamaModel():
-    return ChatOllama(
-        model="mistral",
-        temperature=0,
-        num_ctx=4096,
-        num_predict=256,
-    )
+# def ChatOllamaModel():
+#     return ChatOllama(
+#         model="mistral",
+#         temperature=0,
+#         num_ctx=4096,
+#         num_predict=256,
+#     )

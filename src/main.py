@@ -1,91 +1,11 @@
 import uuid
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
 from backend.langgraph_backend import chatbot, ingest_pdf
-from backend.thread_service import retrieve_all_threads, thread_document_metadata
+from backend.thread_service import delete_thread, load_conversation, retrieve_all_threads, thread_document_metadata
+from src.backend.utils import add_thread, generate_thread_id, get_thread_display_name, reset_chat, set_thread_title_from_first_message
 
 
-# =========================== Utilities ===========================
-def generate_thread_id():
-    return str(uuid.uuid4())  # return string directly
-
-
-def reset_chat():
-    thread_id = generate_thread_id()
-    st.session_state["thread_id"] = thread_id
-    add_thread(thread_id)
-    st.session_state["message_history"] = []
-
-
-def add_thread(thread_id):
-    tid = str(thread_id)
-    if tid not in st.session_state["chat_threads"]:
-        st.session_state["chat_threads"].append(tid)
-
-
-def load_conversation(thread_id):
-    state = chatbot.get_state(config={"configurable": {"thread_id": str(thread_id)}})
-    return state.values.get("messages", [])
-
-
-def get_thread_display_name(thread_id):
-    tid = str(thread_id)
-    titles = st.session_state.get("thread_titles", {})
-    if tid in titles:
-        return titles[tid]
-    short = tid[:8].upper()
-    return f"Chat • {short}"
-
-
-def set_thread_title_from_first_message(thread_id, messages=None):
-    tid = str(thread_id)
-    if tid in st.session_state.get("thread_titles", {}):
-        return
-
-    if messages is None:
-        try:
-            state = chatbot.get_state({"configurable": {"thread_id": tid}})
-            messages = state.values.get("messages", [])
-        except Exception:
-            return
-
-    if not messages:
-        return
-
-    for msg in messages:
-        if isinstance(msg, HumanMessage) and msg.content and msg.content.strip():
-            title = msg.content.strip().split('\n')[0][:60].strip()
-            if len(title) == 60:
-                title += "…"
-            title = " ".join(title.split())
-            if title:
-                st.session_state.setdefault("thread_titles", {})[tid] = title
-            return
-
-
-def delete_thread(thread_id_to_delete):
-    tid = str(thread_id_to_delete)
-    
-    threads = st.session_state.get("chat_threads", [])
-    if tid in threads:
-        threads.remove(tid)
-        st.session_state["chat_threads"] = threads
-
-    st.session_state["thread_titles"].pop(tid, None)
-    st.session_state["ingested_docs"].pop(tid, None)
-
-    checkpointer = chatbot.checkpointer
-    if checkpointer is not None:
-        try:
-            checkpointer.delete_thread(tid)
-        except Exception as e:
-            st.warning(f"DB delete failed for {tid}: {e}")
-
-    if str(st.session_state.get("thread_id", "")) == tid:
-        reset_chat()
-
-    st.rerun()
 
 
 # ======================= Session Initialization ===================

@@ -1,11 +1,13 @@
+import os
+import sqlite3
 from typing import Any, Dict, Optional
 
+from langchain_core.retrievers import BaseRetriever
 import requests
-from backend.thread_service import _THREAD_METADATA, _THREAD_RETRIEVERS
-from config import Config
-from schemas.email_schema import EmailExtraction
-from backend.models import ChatGrokModel, ChatGeminiModel, ChatOllamaModel
-from prompts.email_prompts import email_prompt_template
+from src.config import Config
+from src.schemas.email_schema import EmailExtraction
+from src.models import ChatGrokModel, ChatGeminiModel
+from src.prompts.email_prompts import email_prompt_template
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
 import json
@@ -72,11 +74,54 @@ def get_stock_price(symbol: str) -> dict:
     return r.json()
 
 
-def _get_retriever(thread_id: Optional[str]):
-    """Fetch the retriever for a thread if available."""
-    if thread_id and thread_id in _THREAD_RETRIEVERS:
-        return _THREAD_RETRIEVERS[thread_id]
-    return None
+def _get_retriever(thread_id: Optional[str]) -> Optional[BaseRetriever]:
+    """Load FAISS retriever from disk for the given thread, or return None."""
+    if not thread_id:
+        return None
+
+    # Lazy imports — only executed when function is called
+    from src.backend.langgraph_backend import embeddings
+    from langchain_community.vectorstores import FAISS
+
+    try:
+        conn = sqlite3.connect("chatbot.db", timeout=5)  # small timeout to avoid hanging
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT index_path FROM thread_metadata WHERE thread_id = ?",
+            (str(thread_id),)
+        )
+        row = cursor.fetchone()
+    except sqlite3.Error as e:
+        print(f"DB error while loading retriever for {thread_id}: {e}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+    if not row or not row[0]:
+        return None
+
+    index_path = row[0]
+
+    if not os.path.isdir(index_path):  # FAISS save_local creates a directory
+        print(f"Index path does not exist or is not a directory: {index_path}")
+        return None
+
+    try:
+        vector_store = FAISS.load_local(
+            index_path,
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
+        return vector_store.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 4}
+        )
+    except Exception as e:
+        print(f"Failed to load FAISS index for thread {thread_id}: {e}")
+        return None
+
+    
 
 @tool
 def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
@@ -95,13 +140,18 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
     context = [doc.page_content for doc in result]
     metadata = [doc.metadata for doc in result]
 
+    # ── This is the corrected part ──
+    from src.backend.thread_service import thread_document_metadata   # lazy import here too
+
+    doc_meta = thread_document_metadata(thread_id) if thread_id else {}
+    source_file = doc_meta.get("filename", "unknown")
+
     return {
         "query": query,
         "context": context,
         "metadata": metadata,
-        "source_file": _THREAD_METADATA.get(str(thread_id), {}).get("filename"),
+        "source_file": source_file,
     }
-
 
 tools = [search, get_stock_price, calculator, rag_tool, email_action_extractor]
 
