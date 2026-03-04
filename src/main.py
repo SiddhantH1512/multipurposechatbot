@@ -151,56 +151,36 @@ if "selected_thread_temp" in st.session_state:
 # ============================ Main Layout ========================
 st.title("Multi Utility Chatbot")
 
-# Chat area
+# Display history (clean)
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
-        st.text(message["content"])
+        st.markdown(message["content"])
 
 user_input = st.chat_input("Ask about your document or use tools")
 
 if user_input:
+    # ← Only once!
     st.session_state["message_history"].append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    if user_input:
-        st.session_state["message_history"].append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        full_response = ""
 
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()           # this will be updated live
-            full_response = ""
-
-            try:
-                with httpx.stream(
-                    "POST",
-                    f"{API_BASE_URL}/chat",
-                    data={"message": user_input, "thread_id": thread_key},
-                    timeout=300.0
-                ) as response:
-                    response.raise_for_status()  # raise if 4xx/5xx
-
-                    for chunk in response.iter_text():
-                        if chunk:
-                            full_response += chunk
-                            # Show typing cursor effect
-                            message_placeholder.markdown(full_response + "▌")
-
-                # Final clean render (remove cursor)
-                message_placeholder.markdown(full_response)
-
-                # Save to history
-                st.session_state["message_history"].append(
-                    {"role": "assistant", "content": full_response}
-                )
-
-            except httpx.TimeoutException:
-                message_placeholder.error("Request timed out — the model might be slow or busy.")
-            except httpx.HTTPStatusError as e:
-                message_placeholder.error(f"API error: {e.response.status_code} - {e.response.text}")
-            except Exception as e:
-                message_placeholder.error(f"Unexpected error: {str(e)}")
+        try:
+            with httpx.stream("POST", f"{API_BASE_URL}/chat",
+                              data={"message": user_input, "thread_id": thread_key},
+                              timeout=300.0) as response:
+                response.raise_for_status()
+                for chunk in response.iter_text():
+                    if chunk:
+                        full_response += chunk
+                        message_placeholder.markdown(full_response + "▌")
+            message_placeholder.markdown(full_response)
+            st.session_state["message_history"].append({"role": "assistant", "content": full_response})
+        except Exception as e:
+            message_placeholder.error(str(e))
 
     # Refresh title and doc info (same as before)
     state = chatbot.get_state(config={"configurable": {"thread_id": thread_key}})  # ← temporary, we'll fix later
@@ -225,16 +205,12 @@ if selected_thread:
     temp_messages = []
     for msg in messages:
         if isinstance(msg, HumanMessage):
-            role = "user"
-        elif isinstance(msg, AIMessage):
-            role = "assistant"
-        elif isinstance(msg, ToolMessage):
-            role = "assistant"
-        else:
-            continue
-        temp_messages.append({"role": role, "content": msg.content})
-
+            temp_messages.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage) and msg.content.strip():
+            temp_messages.append({"role": "assistant", "content": msg.content})
+        # ← ToolMessages are deliberately ignored here (they contain raw context/JSON)
     st.session_state["message_history"] = temp_messages
+
     st.session_state["ingested_docs"].setdefault(thread_key, {})
 
     st.rerun()

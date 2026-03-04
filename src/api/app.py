@@ -55,10 +55,7 @@ async def send_message(
         raise HTTPException(status_code=400, detail="thread_id and message are required")
 
     def generate():
-        config = {
-            "configurable": {"thread_id": thread_id},
-            "recursion_limit": 50,
-        }
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
 
         try:
             for chunk, _ in chatbot.stream(
@@ -66,21 +63,18 @@ async def send_message(
                 config=config,
                 stream_mode="messages",
             ):
-                msg = chunk[0] if isinstance(chunk, tuple) else chunk
-
-                if isinstance(msg, AIMessage):
-                    if msg.content.strip():
-                        yield msg.content
-                    elif msg.tool_calls:
-                        yield "→ Retrieving from document...\n"
-                    # Do NOT yield anything for empty AIMessage → removes spam
-
-                elif isinstance(msg, ToolMessage):
-                    if "Error" not in msg.content:           # optional: hide error messages
-                        yield "[Document search complete]\n"
+                if isinstance(chunk, AIMessage) and chunk.content:
+                    yield chunk.content
+                elif isinstance(chunk, ToolMessage):
+                    tool_name = getattr(chunk, "name", "unknown")
+                    if tool_name == "rag_tool":
+                        yield "📄 **Searching document...**\n\n"
+                    elif tool_name == "get_stock_price":
+                        yield "📈 **Fetching latest stock price...**\n\n"
+                    elif tool_name == "calculator":
+                        yield "🧮 **Calculating...**\n\n"
                     else:
-                        yield f"[Search issue] {msg.content[:100]}...\n"
-
+                        yield f"🔧 **Calling {tool_name} tool...**\n\n"
         except Exception as e:
             yield f"\n\n**Error:** {str(e)}"
 
