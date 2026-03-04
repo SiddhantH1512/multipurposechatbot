@@ -1,18 +1,18 @@
-import os
-import sqlite3
-from typing import Any, Dict, Optional
-
-from langchain_core.retrievers import BaseRetriever
+from typing import Optional
+from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
+from langchain_community.document_compressors import FlashrankRerank
+from langchain_community.retrievers import BM25Retriever
+from langchain_core.documents import Document
 import requests
-from src.config import Config
 from src.schemas.email_schema import EmailExtraction
-from src.models import ChatGrokModel, ChatGeminiModel
+from src.models import ChatGrokModel
 from src.prompts.email_prompts import email_prompt_template
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.tools import tool
 import json
 
 model = ChatGrokModel()
+_reranker = FlashrankRerank()
 
 search = DuckDuckGoSearchRun(region="us-en")
 @tool
@@ -33,7 +33,8 @@ def email_action_extractor(email_test: str) -> dict:
 @tool
 def calculator(first_num: float, second_num: float, operation: str) -> dict:
     """
-    Perform a basic arithmetic operation on two numbers.
+    ONLY use this for simple math when explicitly asked to calculate numbers.
+    Do NOT use for anything else, especially not for processing text or context.
     Supported operations: add, sub, mul, div
     """
     try:
@@ -74,84 +75,124 @@ def get_stock_price(symbol: str) -> dict:
     return r.json()
 
 
-def _get_retriever(thread_id: Optional[str]) -> Optional[BaseRetriever]:
-    """Load FAISS retriever from disk for the given thread, or return None."""
-    if not thread_id:
-        return None
-
-    # Lazy imports — only executed when function is called
-    from src.backend.langgraph_backend import embeddings
-    from langchain_community.vectorstores import FAISS
-
-    try:
-        conn = sqlite3.connect("chatbot.db", timeout=5)  # small timeout to avoid hanging
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT index_path FROM thread_metadata WHERE thread_id = ?",
-            (str(thread_id),)
-        )
-        row = cursor.fetchone()
-    except sqlite3.Error as e:
-        print(f"DB error while loading retriever for {thread_id}: {e}")
-        return None
-    finally:
-        if 'conn' in locals():
-            conn.close()
-
-    if not row or not row[0]:
-        return None
-
-    index_path = row[0]
-
-    if not os.path.isdir(index_path):  # FAISS save_local creates a directory
-        print(f"Index path does not exist or is not a directory: {index_path}")
-        return None
-
-    try:
-        vector_store = FAISS.load_local(
-            index_path,
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
-        return vector_store.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": 4}
-        )
-    except Exception as e:
-        print(f"Failed to load FAISS index for thread {thread_id}: {e}")
-        return None
-
-    
 
 @tool
-def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
+def rag_tool(query: str, thread_id: Optional[str] = None) -> str:
     """
-    Retrieve relevant information from the uploaded PDF for this chat thread.
-    Always include the thread_id when calling this tool.
+    AI/ML domain RAG tool. Retrieves relevant passages using hybrid (vector + BM25)
+    search and reranks them with Flashrank. Returns formatted context for the LLM.
     """
-    retriever = _get_retriever(thread_id)
-    if retriever is None:
-        return {
-            "error": "No document indexed for this chat. Upload a PDF first.",
-            "query": query,
+    from src.backend.langgraph_backend import vector_store
+
+    if not thread_id:
+        return "Error: thread_id is required for document-specific search."
+
+    print(f"[RAG] Query: {query}")
+    print(f"[RAG] Thread filter: {thread_id}")
+
+    try:
+        get_result = vector_store.get(
+            where={"thread_id": str(thread_id)},
+            include=["documents", "metadatas"]
+        )
+    except Exception as e:
+        print(f"[RAG] Chroma .get() failed: {e}")
+        return f"Retrieval error: {str(e)}"
+
+    if isinstance(get_result, dict):
+        doc_texts = get_result.get("documents", [])
+        metas     = get_result.get("metadatas", [])
+        print("[RAG] Detected dictionary return from .get()")
+    else:
+        try:
+            doc_texts = get_result.documents or []
+            metas     = get_result.metadatas or []
+            print("[RAG] Detected GetResult object from .get()")
+        except AttributeError:
+            print("[RAG] Unexpected format - falling back to empty")
+            doc_texts = []
+            metas = []
+
+    if not doc_texts:
+        print("[RAG] No documents found for this thread")
+        return "No documents have been uploaded or indexed in this conversation yet."
+
+    print(f"[RAG] Found {len(doc_texts)} raw documents for thread {thread_id}")
+
+    filtered_docs = [
+        Document(page_content=text, metadata=meta or {})
+        for text, meta in zip(doc_texts, metas)
+        if isinstance(text, str) and text.strip()
+    ]
+
+    if not filtered_docs:
+        return "No valid document content found after filtering."
+
+    vector_retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={
+            "k": 12,
+            "filter": {"thread_id": str(thread_id)}
         }
+    )
 
-    result = retriever.invoke(query)
-    context = [doc.page_content for doc in result]
-    metadata = [doc.metadata for doc in result]
+    try:
+        bm25_retriever = BM25Retriever.from_documents(
+            filtered_docs,
+            k=12
+        )
+    except Exception as e:
+        print(f"[RAG] BM25 initialization failed: {e}")
+        bm25_retriever = None
 
-    # ── This is the corrected part ──
-    from src.backend.thread_service import thread_document_metadata   # lazy import here too
+    if bm25_retriever:
+        ensemble = EnsembleRetriever(
+            retrievers=[vector_retriever, bm25_retriever],
+            weights=[0.7, 0.3]
+        )
+        print("[RAG] Using hybrid vector + BM25 ensemble")
+    else:
+        ensemble = vector_retriever
+        print("[RAG] Falling back to vector-only (BM25 failed)")
 
-    doc_meta = thread_document_metadata(thread_id) if thread_id else {}
-    source_file = doc_meta.get("filename", "unknown")
+    try:
+        compression_retriever = ContextualCompressionRetriever(
+            base_compressor=_reranker,
+            base_retriever=ensemble
+        )
+        docs = compression_retriever.invoke(query)
+        print(f"[RAG] After hybrid retrieval + Flashrank reranking: {len(docs)} docs")
+    except Exception as e:
+        print(f"[RAG] Reranking failed: {e} → falling back to ensemble")
+        docs = ensemble.invoke(query)
+        print(f"[RAG] Fallback ensemble retrieval: {len(docs)} docs")
 
-    return {
-        "query": query,
-        "context": context,
-        "metadata": metadata,
-        "source_file": source_file,
-    }
+    if not docs:
+        return "No relevant passages found in the uploaded document(s)."
+
+    context_blocks = []
+    sources = []
+
+    for i, doc in enumerate(docs, 1):
+        page     = doc.metadata.get("page", "N/A")
+        filename = doc.metadata.get("filename", "document.pdf")
+
+        context_blocks.append(
+            f"--- Excerpt {i} (from {filename}, page {page}) ---\n"
+            f"{doc.page_content.strip()}\n"
+        )
+        sources.append(f"[{i}] {filename} – page {page}")
+
+    readable_output = (
+        "Relevant excerpts from uploaded documents (hybrid search + reranked):\n\n"
+        + "\n".join(context_blocks)
+        + "\n\nSources:\n"
+        + "\n".join(sources)
+    )
+
+    return readable_output
+
+
 
 tools = [search, get_stock_price, calculator, rag_tool, email_action_extractor]
 

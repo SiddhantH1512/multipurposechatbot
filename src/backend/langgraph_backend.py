@@ -1,161 +1,135 @@
 from __future__ import annotations
-import tempfile
-from dotenv import load_dotenv
 import os
+os.environ["CHROMA_TELEMETRY_IMPL"] = "none"
+
 import tempfile
-from langchain_community.vectorstores import FAISS
+import sqlite3
+from typing import Annotated, TypedDict
+from dotenv import load_dotenv
+from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.tools import BaseTool, tool
-from langgraph.graph import StateGraph, START, END
-from typing import Any, Dict, Optional, TypedDict, List, Annotated
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langgraph.graph import StateGraph, START, add_messages
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.graph.message import add_messages
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langchain_community.embeddings import OllamaEmbeddings
-from src.database.init_db import initialize_db
 from langgraph.prebuilt import ToolNode, tools_condition
-from src.models import ChatGrokModel, ChatGeminiModel
+from langchain_huggingface import HuggingFaceEmbeddings
+from src.models import ChatOpenAIModel
 from src.tools.tool_list import tools
-# from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_community.embeddings import HuggingFaceEmbeddings
-import sqlite3
 
-initialize_db()
+
 load_dotenv()
 
-
-# -------------------
-# 1. LLM + embeddings
-# -------------------
-model = ChatGrokModel()
-
-
+# ========================== CONFIG ==========================
 embeddings = HuggingFaceEmbeddings(
-    model_name="nomic-ai/nomic-embed-text-v1.5",
-    model_kwargs={
-        "device": "mps",               # Use Apple GPU acceleration
-        "trust_remote_code": True,     # Required for this model
-    },
-    encode_kwargs={
-        "normalize_embeddings": True,  # Good practice for cosine similarity
-    },
+    model_name="BAAI/bge-small-en-v1.5",
+    model_kwargs={"device": "mps"},
+    encode_kwargs={"normalize_embeddings": True},
 )
-llm_with_tools = model.bind_tools(tools)
 
+llm = ChatOpenAIModel()
+llm_with_tools = llm.bind_tools(tools)
 
-def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None) -> dict:
-    """
-    Build a FAISS retriever for the uploaded PDF and store it for the thread.
+CHROMA_PATH = "chroma_db"
+COLLECTION_NAME = "ai_ml_documents"
 
-    Returns a summary dict that can be surfaced in the UI.
-    """
-    if not file_bytes:
-        raise ValueError("No bytes received for ingestion.")
+# Initialize Chroma (persistent)
+vector_store = Chroma(
+    collection_name=COLLECTION_NAME,
+    embedding_function=embeddings,
+    persist_directory=CHROMA_PATH,
+)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-        temp_file.write(file_bytes)
-        temp_path = temp_file.name
+# ========================== INGESTION (NEW) ==========================
+def ingest_pdf(file_bytes: bytes, thread_id: str, filename: str = None) -> dict:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
+        f.write(file_bytes)
+        temp_path = f.name
 
     try:
         loader = PyPDFLoader(temp_path)
         docs = loader.load()
 
+        # Semantic chunking — best for AI/ML resumes & papers in 2026
+        # splitter = SemanticChunker(embeddings, breakpoint_threshold_type="percentile")
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200, separators=["\n\n", "\n", " ", ""]
-        )
+                chunk_size=1200,
+                chunk_overlap=300,
+                separators=["\n\n", "\n", ". ", " ", ""],
+                length_function=len,
+            )
         chunks = splitter.split_documents(docs)
 
-        index_dir = "faiss_indexes"
-        os.makedirs(index_dir, exist_ok=True)
-        index_path = os.path.join(index_dir, f"faiss_{thread_id}")
+        for chunk in chunks:
+            chunk.metadata.update({
+                "thread_id": str(thread_id),
+                "filename": filename or "unknown.pdf",
+                "page": chunk.metadata.get("page", 0) + 1
+            })
 
-        vector_store = FAISS.from_documents(chunks, embeddings)
-        vector_store.save_local(index_path)
-
-        retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+        vector_store.add_documents(chunks)
 
         conn = sqlite3.connect("chatbot.db")
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT OR REPLACE INTO thread_metadata (thread_id, filename, documents, chunks, index_path)
+            INSERT OR REPLACE INTO thread_metadata 
+            (thread_id, filename, documents, chunks, index_path)
             VALUES (?, ?, ?, ?, ?)
-        """, (str(thread_id), filename or os.path.basename(temp_path), len(docs), len(chunks), index_path))
+        """, (str(thread_id), filename, len(docs), len(chunks), CHROMA_PATH))
         conn.commit()
         conn.close()
 
-        # _THREAD_RETRIEVERS[str(thread_id)] = retriever
-        # _THREAD_METADATA[str(thread_id)] = {
-        #     "filename": filename or os.path.basename(temp_path),
-        #     "documents": len(docs),
-        #     "chunks": len(chunks),
-        # }
-
         return {
-            "filename": filename or os.path.basename(temp_path),
+            "filename": filename,
             "documents": len(docs),
             "chunks": len(chunks),
         }
     finally:
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+        os.unlink(temp_path)
 
-
-# -------------------
-# 4. State
-# -------------------
+# ========================== STATE & NODES ==========================
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
-
-# -------------------
-# 5. Nodes
-# -------------------
 def chat_node(state: ChatState, config=None):
-    """LLM node that may answer or request a tool call."""
-    thread_id = None
-    if config and isinstance(config, dict):
-        thread_id = config.get("configurable", {}).get("thread_id")
+    thread_id = config.get("configurable", {}).get("thread_id") if config else None
 
-    system_message = SystemMessage(
-        content=(
-            "You are a helpful assistant. For questions about the uploaded PDF, call "
-            "the `rag_tool` and include the thread_id "
-            f"`{thread_id}`. You can also use the web search, stock price, and "
-            "calculator tools when helpful. If no document is available, ask the user "
-            "to upload a PDF."
-        )
-    )
+    system_prompt = f"""You are an expert AI/ML assistant answering questions about uploaded documents (research papers, notes, textbooks, etc.).
 
-    messages = [system_message, *state["messages"]]
+Document-question rules:
+1. For any new question that seems related to uploaded document(s) → ALWAYS call rag_tool first (with thread_id = {thread_id}).
+2. When you receive the ToolMessage from rag_tool → this is your signal to NOW write the final answer.
+   - Use the excerpts provided — even if the match is indirect or requires inference.
+   - If the context mentions layers, N, stacks, encoder/decoder architecture, etc. → use that information.
+   - ALWAYS include citations: [Source 1: filename – page X]
+   - ONLY say "No relevant information found…" if the context has literally nothing related to the question.
+3. Be concise, technical, and factual. Use LaTeX for math.
+
+Never stay silent after receiving context. Always produce an answer."""
+
+    messages = [SystemMessage(content=system_prompt), *state["messages"]]
+    print("[LLM DEBUG] Full messages sent to LLM:")
+    for msg in messages:
+        if isinstance(msg, HumanMessage) or isinstance(msg, AIMessage):
+            print(f"  {msg.type}: {msg.content[:500]}...")
+    
+    print("[CONTEXT SENT TO MODEL AFTER TOOL]")
+    print(messages[-1].content[:1500])
     response = llm_with_tools.invoke(messages, config=config)
     return {"messages": [response]}
 
-
 tool_node = ToolNode(tools)
 
-# -------------------
-# 6. Checkpointer
-# -------------------
-conn = sqlite3.connect(database="chatbot.db", check_same_thread=False)
+# Checkpointer (SQLite stays)
+conn = sqlite3.connect("chatbot.db", check_same_thread=False)
 checkpointer = SqliteSaver(conn=conn)
 
-# -------------------
-# 7. Graph
-# -------------------
+# ========================== GRAPH ==========================
 graph = StateGraph(ChatState)
 graph.add_node("chat_node", chat_node)
 graph.add_node("tools", tool_node)
-
 graph.add_edge(START, "chat_node")
 graph.add_conditional_edges("chat_node", tools_condition)
 graph.add_edge("tools", "chat_node")
 
 chatbot = graph.compile(checkpointer=checkpointer)
-
-# -------------------
-# 8. Helpers
-# -------------------

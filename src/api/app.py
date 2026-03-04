@@ -1,9 +1,7 @@
-# src/api/app.py
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
-from typing import Optional
-import uuid
-
 from src.backend.langgraph_backend import chatbot, ingest_pdf
 from src.backend.thread_service import retrieve_all_threads, thread_document_metadata
 from src.backend.thread_service import load_conversation
@@ -45,6 +43,9 @@ async def ingest_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from fastapi.responses import StreamingResponse
+from fastapi import Form, HTTPException
+
 @app.post("/chat")
 async def send_message(
     message: str = Form(...),
@@ -53,38 +54,38 @@ async def send_message(
     if not thread_id or not message:
         raise HTTPException(status_code=400, detail="thread_id and message are required")
 
-    try:
+    def generate():
         config = {
             "configurable": {"thread_id": thread_id},
-            "metadata": {"thread_id": thread_id},
+            "recursion_limit": 50,
         }
 
-        # Stream simulation – for simplicity we collect full response
-        messages = []
-        for chunk, _ in chatbot.stream(
-            {"messages": [HumanMessage(content=message)]},
-            config=config,
-            stream_mode="messages",
-        ):
-            if isinstance(chunk, (AIMessage, ToolMessage)):
-                messages.append(chunk)
+        try:
+            for chunk, _ in chatbot.stream(
+                {"messages": [HumanMessage(content=message)]},
+                config=config,
+                stream_mode="messages",
+            ):
+                msg = chunk[0] if isinstance(chunk, tuple) else chunk
 
-        # Get final AI message (last relevant one)
-        ai_content = ""
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and msg.content:
-                ai_content = msg.content
-                break
+                if isinstance(msg, AIMessage):
+                    if msg.content.strip():
+                        yield msg.content
+                    elif msg.tool_calls:
+                        yield "→ Retrieving from document...\n"
+                    # Do NOT yield anything for empty AIMessage → removes spam
 
-        return {
-            "thread_id": thread_id,
-            "user_message": message,
-            "assistant_response": ai_content,
-            "full_messages": [msg.content for msg in messages if msg.content]
-        }
+                elif isinstance(msg, ToolMessage):
+                    if "Error" not in msg.content:           # optional: hide error messages
+                        yield "[Document search complete]\n"
+                    else:
+                        yield f"[Search issue] {msg.content[:100]}...\n"
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+        except Exception as e:
+            yield f"\n\n**Error:** {str(e)}"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+    
 
 
 @app.get("/threads")
@@ -113,3 +114,7 @@ async def get_conversation(thread_id: str):
         elif isinstance(msg, ToolMessage):
             history.append({"role": "tool", "content": msg.content, "tool": msg.name})
     return {"thread_id": thread_id, "messages": history}
+
+
+
+

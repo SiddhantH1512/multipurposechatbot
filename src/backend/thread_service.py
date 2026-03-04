@@ -2,13 +2,14 @@
 
 import sqlite3
 from typing import Any, Dict, List, Optional
-from src.backend.langgraph_backend import chatbot 
+
 
 _THREAD_METADATA_TABLE = "thread_metadata"
 
 
 def retrieve_all_threads() -> List[str]:
     """List all thread_ids that exist in the checkpointer."""
+    from src.backend.langgraph_backend import chatbot 
     all_threads = set()
     for checkpoint in chatbot.checkpointer.list(None):
         all_threads.add(checkpoint.config["configurable"]["thread_id"])
@@ -17,6 +18,7 @@ def retrieve_all_threads() -> List[str]:
 
 def load_conversation(thread_id: str) -> list:
     """Load messages for a given thread from checkpointer."""
+    from src.backend.langgraph_backend import chatbot 
     state = chatbot.get_state(config={"configurable": {"thread_id": thread_id}})
     return state.values.get('messages', [])
 
@@ -53,6 +55,7 @@ def thread_document_metadata(thread_id: str) -> Dict[str, Any]:
 
 def delete_thread(thread_id: str):
     """Delete thread from checkpointer + metadata table + session state."""
+    from src.backend.langgraph_backend import chatbot 
     # Delete from checkpointer
     try:
         conn = chatbot.checkpointer.conn

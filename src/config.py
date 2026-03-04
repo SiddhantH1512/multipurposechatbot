@@ -6,7 +6,9 @@ load_dotenv()
 class Config:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", None)
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", None)
-    MODEL_NAME = "llama-3.1-8b-instant"
+    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY", None)
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", None)
+    MODEL_NAME = "llama-3.1-70b-versatile"
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", None)
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", None)
     LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", None)

@@ -1,11 +1,11 @@
-import uuid
+import httpx
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from backend.langgraph_backend import chatbot, ingest_pdf
 from backend.thread_service import delete_thread, load_conversation, retrieve_all_threads, thread_document_metadata
 from src.backend.utils import add_thread, generate_thread_id, get_thread_display_name, reset_chat, set_thread_title_from_first_message
 
-
+API_BASE_URL = "http://127.0.0.1:8000"
 
 
 # ======================= Session Initialization ===================
@@ -62,17 +62,44 @@ else:
 
 uploaded_pdf = st.sidebar.file_uploader("Upload a PDF for this chat", type=["pdf"])
 if uploaded_pdf:
-    if uploaded_pdf.name in thread_docs:
+    thread_key = str(st.session_state["thread_id"])
+
+    # Check if already processed (optional – we can improve this later)
+    if uploaded_pdf.name in st.session_state["ingested_docs"].get(thread_key, {}):
         st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
     else:
-        with st.sidebar.status("Indexing PDF…", expanded=True) as status_box:
-            summary = ingest_pdf(
-                uploaded_pdf.getvalue(),
-                thread_id=thread_key,
-                filename=uploaded_pdf.name,
-            )
-            thread_docs[uploaded_pdf.name] = summary
-            status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
+        with st.sidebar.status("Uploading & Indexing PDF…", expanded=True) as status_box:
+            try:
+                files = {"file": (uploaded_pdf.name, uploaded_pdf.getvalue(), "application/pdf")}
+                data = {"thread_id": thread_key}
+
+                response = httpx.post(
+                    f"{API_BASE_URL}/ingest",
+                    files=files,
+                    data=data,
+                    timeout=httpx.Timeout(300.0, connect=10.0, read=300.0)
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    summary = result["summary"]
+                    
+                    # Update local session state (for UI display)
+                    st.session_state["ingested_docs"].setdefault(thread_key, {})[uploaded_pdf.name] = summary
+                    
+                    status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
+                    st.sidebar.success(
+                        f"Indexed `{summary.get('filename')}` "
+                        f"({summary.get('chunks')} chunks, {summary.get('documents')} pages)"
+                    )
+                else:
+                    error_msg = response.json().get("detail", "Unknown error")
+                    status_box.update(label=f"❌ Failed: {error_msg}", state="error", expanded=True)
+                    st.sidebar.error(f"Ingestion failed: {error_msg}")
+
+            except Exception as e:
+                status_box.update(label=f"❌ Error: {str(e)}", state="error", expanded=True)
+                st.sidebar.error(f"Upload error: {str(e)}")
 
 st.sidebar.subheader("Past conversations")
 
@@ -134,51 +161,49 @@ user_input = st.chat_input("Ask about your document or use tools")
 if user_input:
     st.session_state["message_history"].append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.text(user_input)
+        st.markdown(user_input)
 
-    CONFIG = {
-        "configurable": {"thread_id": thread_key},
-        "metadata": {"thread_id": thread_key},
-        "run_name": "chat_turn",
-    }
+    if user_input:
+        st.session_state["message_history"].append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
-    with st.chat_message("assistant"):
-        status_holder = {"box": None}
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()           # this will be updated live
+            full_response = ""
 
-        def ai_only_stream():
-            for message_chunk, _ in chatbot.stream(
-                {"messages": [HumanMessage(content=user_input)]},
-                config=CONFIG,
-                stream_mode="messages",
-            ):
-                if isinstance(message_chunk, ToolMessage):
-                    tool_name = getattr(message_chunk, "name", "tool")
-                    if status_holder["box"] is None:
-                        status_holder["box"] = st.status(
-                            f"🔧 Using `{tool_name}` …", expanded=True
-                        )
-                    else:
-                        status_holder["box"].update(
-                            label=f"🔧 Using `{tool_name}` …",
-                            state="running",
-                            expanded=True,
-                        )
+            try:
+                with httpx.stream(
+                    "POST",
+                    f"{API_BASE_URL}/chat",
+                    data={"message": user_input, "thread_id": thread_key},
+                    timeout=300.0
+                ) as response:
+                    response.raise_for_status()  # raise if 4xx/5xx
 
-                if isinstance(message_chunk, AIMessage):
-                    yield message_chunk.content
+                    for chunk in response.iter_text():
+                        if chunk:
+                            full_response += chunk
+                            # Show typing cursor effect
+                            message_placeholder.markdown(full_response + "▌")
 
-        ai_message = st.write_stream(ai_only_stream())
+                # Final clean render (remove cursor)
+                message_placeholder.markdown(full_response)
 
-        if status_holder["box"] is not None:
-            status_holder["box"].update(
-                label="✅ Tool finished", state="complete", expanded=False
-            )
+                # Save to history
+                st.session_state["message_history"].append(
+                    {"role": "assistant", "content": full_response}
+                )
 
-    st.session_state["message_history"].append(
-        {"role": "assistant", "content": ai_message}
-    )
+            except httpx.TimeoutException:
+                message_placeholder.error("Request timed out — the model might be slow or busy.")
+            except httpx.HTTPStatusError as e:
+                message_placeholder.error(f"API error: {e.response.status_code} - {e.response.text}")
+            except Exception as e:
+                message_placeholder.error(f"Unexpected error: {str(e)}")
 
-    state = chatbot.get_state(config={"configurable": {"thread_id": thread_key}})
+    # Refresh title and doc info (same as before)
+    state = chatbot.get_state(config={"configurable": {"thread_id": thread_key}})  # ← temporary, we'll fix later
     messages_in_graph = state.values.get("messages", [])
     set_thread_title_from_first_message(thread_key, messages_in_graph)
 
