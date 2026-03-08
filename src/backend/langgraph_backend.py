@@ -152,13 +152,13 @@ tool_node = ToolNode(tools)
 pool = ConnectionPool(Config.POSTGRES_CONNINFO)  # add min_size=4, max_size=20 etc. if needed
 
 checkpointer = PostgresSaver(pool)
-from psycopg import Connection
+# from psycopg import Connection
 
-with pool.connection() as conn:
-    conn.autocommit = True
-    temp_checkpointer = PostgresSaver(conn)
-    temp_checkpointer.setup()
-    print("Checkpointer schema created successfully")
+# with pool.connection() as conn:
+#     conn.autocommit = True
+#     temp_checkpointer = PostgresSaver(conn)
+#     temp_checkpointer.setup()
+#     print("Checkpointer schema created successfully")
 
 # Then create the regular checkpointer with the pool
 checkpointer = PostgresSaver(pool)
