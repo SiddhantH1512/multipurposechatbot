@@ -1,4 +1,8 @@
 import os
+
+from sqlalchemy import text
+
+from src.database.engine import async_engine
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
@@ -6,6 +10,9 @@ from src.backend.langgraph_backend import chatbot, ingest_pdf
 from src.backend.thread_service import retrieve_all_threads, thread_document_metadata
 from src.backend.thread_service import load_conversation
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from fastapi.responses import StreamingResponse
+from fastapi import Form, HTTPException
+
 
 app = FastAPI(
     title="LangGraph PDF Chatbot API",
@@ -22,29 +29,56 @@ async def health_check():
 @app.post("/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
-    thread_id: str = Form(...),
+    thread_id: str = Form(...)
 ):
+    """
+    Async endpoint to upload and index a PDF for a given thread.
+    Uses async_engine for any manual DB operations.
+    """
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id is required")
 
     try:
+        # Read file contents (async-friendly)
         contents = await file.read()
+
+        # Call your existing ingestion function
+        # (make sure ingest_pdf is compatible — see notes below)
         summary = ingest_pdf(
             file_bytes=contents,
             thread_id=thread_id,
             filename=file.filename
         )
+
+        # Optional: If you still need to do extra manual DB writes here,
+        # do it asynchronously like this:
+        async with async_engine.connect() as conn:
+            await conn.execute(text("""
+                INSERT INTO thread_metadata 
+                (thread_id, filename, documents, chunks)
+                VALUES (:tid, :fn, :docs, :chunks)
+                ON CONFLICT (thread_id) DO UPDATE SET
+                    filename = EXCLUDED.filename,
+                    documents = EXCLUDED.documents,
+                    chunks = EXCLUDED.chunks,
+                    updated_at = CURRENT_TIMESTAMP
+            """), {
+                "tid": thread_id,
+                "fn": file.filename,
+                "docs": summary.get("documents", 0),
+                "chunks": summary.get("chunks", 0),
+            })
+            await conn.commit()
+
         return JSONResponse(content={
             "status": "success",
             "summary": summary,
             "thread_id": thread_id
         })
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
-
-from fastapi.responses import StreamingResponse
-from fastapi import Form, HTTPException
 
 @app.post("/chat")
 async def send_message(
@@ -76,7 +110,12 @@ async def send_message(
                     else:
                         yield f"🔧 **Calling {tool_name} tool...**\n\n"
         except Exception as e:
-            yield f"\n\n**Error:** {str(e)}"
+            # ← Catch ALL exceptions and send a clean message to the UI
+            error_msg = "Sorry, something went wrong while processing your request. Please try again."
+            print(f"Checkpoint/stream error: {str(e)}")  # log the real error server-side
+            yield f"\n\n**Error:** {error_msg}"
+            # Optionally yield the technical detail only in logs, not UI
+            # yield f"\n\n(Technical: {str(e)})"  # remove or comment this line
 
     return StreamingResponse(generate(), media_type="text/event-stream")
     

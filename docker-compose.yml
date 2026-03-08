@@ -1,0 +1,22 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16   # official pgvector image (PostgreSQL 16 + extension pre-installed)
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Siddhant1512!  # ← change this!
+      POSTGRES_DB: chatbot_db
+    ports:
+      - "5433:5432"   # map to 5433 so it doesn't conflict if you have local Postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

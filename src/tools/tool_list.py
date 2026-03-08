@@ -90,56 +90,52 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> str:
     print(f"[RAG] Query: {query}")
     print(f"[RAG] Thread filter: {thread_id}")
 
+    # ───────────────────────────────────────────────────────────────
+    # Fetch all documents for this thread using similarity_search with filter
+    # (PGVector supports metadata filtering via where clause)
+    # ───────────────────────────────────────────────────────────────
     try:
-        get_result = vector_store.get(
-            where={"thread_id": str(thread_id)},
-            include=["documents", "metadatas"]
+        # Use retriever with filter to get documents (this is the correct way)
+        filtered_retriever = vector_store.as_retriever(
+            search_type="similarity",
+            search_kwargs={
+                "k": 50,  # fetch more candidates since we filter + rerank
+                "filter": {"thread_id": str(thread_id)}
+            }
         )
+
+        # For BM25 fallback, we still need all docs → fetch them separately
+        # PGVector .similarity_search() with k=0 or large k can approximate "get all"
+        all_docs = vector_store.similarity_search(
+            query="",  # empty query = fetch all (with filter)
+            k=1000,    # large enough to get everything in thread
+            filter={"thread_id": str(thread_id)}
+        )
+
+        print(f"[RAG] Found {len(all_docs)} raw documents for thread {thread_id}")
+
     except Exception as e:
-        print(f"[RAG] Chroma .get() failed: {e}")
+        print(f"[RAG] PGVector retrieval failed: {e}")
         return f"Retrieval error: {str(e)}"
 
-    if isinstance(get_result, dict):
-        doc_texts = get_result.get("documents", [])
-        metas     = get_result.get("metadatas", [])
-        print("[RAG] Detected dictionary return from .get()")
-    else:
-        try:
-            doc_texts = get_result.documents or []
-            metas     = get_result.metadatas or []
-            print("[RAG] Detected GetResult object from .get()")
-        except AttributeError:
-            print("[RAG] Unexpected format - falling back to empty")
-            doc_texts = []
-            metas = []
-
-    if not doc_texts:
-        print("[RAG] No documents found for this thread")
+    if not all_docs:
         return "No documents have been uploaded or indexed in this conversation yet."
 
-    print(f"[RAG] Found {len(doc_texts)} raw documents for thread {thread_id}")
-
-    filtered_docs = [
-        Document(page_content=text, metadata=meta or {})
-        for text, meta in zip(doc_texts, metas)
-        if isinstance(text, str) and text.strip()
-    ]
-
-    if not filtered_docs:
-        return "No valid document content found after filtering."
-
+    # ───────────────────────────────────────────────────────────────
+    # Continue with BM25 + ensemble + reranking (same as before)
+    # ───────────────────────────────────────────────────────────────
     vector_retriever = vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={
-            "k": 12,
+            "k": 6,
             "filter": {"thread_id": str(thread_id)}
         }
     )
 
     try:
         bm25_retriever = BM25Retriever.from_documents(
-            filtered_docs,
-            k=12
+            all_docs,  # use the full docs we fetched
+            k=6
         )
     except Exception as e:
         print(f"[RAG] BM25 initialization failed: {e}")
@@ -153,7 +149,7 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> str:
         print("[RAG] Using hybrid vector + BM25 ensemble")
     else:
         ensemble = vector_retriever
-        print("[RAG] Falling back to vector-only (BM25 failed)")
+        print("[RAG] Falling back to vector-only")
 
     try:
         compression_retriever = ContextualCompressionRetriever(
@@ -170,11 +166,12 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> str:
     if not docs:
         return "No relevant passages found in the uploaded document(s)."
 
+    # Format output (same as before)
     context_blocks = []
     sources = []
 
     for i, doc in enumerate(docs, 1):
-        page     = doc.metadata.get("page", "N/A")
+        page = doc.metadata.get("page", "N/A")
         filename = doc.metadata.get("filename", "document.pdf")
 
         context_blocks.append(

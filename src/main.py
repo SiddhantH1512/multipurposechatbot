@@ -7,7 +7,6 @@ from src.backend.utils import add_thread, generate_thread_id, get_thread_display
 
 API_BASE_URL = "http://127.0.0.1:8000"
 
-
 # ======================= Session Initialization ===================
 if "message_history" not in st.session_state:
     st.session_state["message_history"] = []
@@ -26,7 +25,7 @@ if "chat_threads" not in st.session_state:
             seen.add(tid)
     st.session_state["chat_threads"] = cleaned
 
-# Extra safety: remove duplicates again (in case of reload / bug)
+# Extra safety: remove duplicates again
 threads_set = set(str(t).strip() for t in st.session_state["chat_threads"] if t)
 st.session_state["chat_threads"] = list(threads_set)
 
@@ -40,7 +39,7 @@ add_thread(st.session_state["thread_id"])
 
 thread_key = str(st.session_state["thread_id"])
 thread_docs = st.session_state["ingested_docs"].setdefault(thread_key, {})
-threads = st.session_state["chat_threads"][::-1]
+threads = st.session_state["chat_threads"][::-1]  # newest first
 selected_thread = None
 
 # ============================ Sidebar ============================
@@ -64,7 +63,6 @@ uploaded_pdf = st.sidebar.file_uploader("Upload a PDF for this chat", type=["pdf
 if uploaded_pdf:
     thread_key = str(st.session_state["thread_id"])
 
-    # Check if already processed (optional – we can improve this later)
     if uploaded_pdf.name in st.session_state["ingested_docs"].get(thread_key, {}):
         st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
     else:
@@ -84,7 +82,6 @@ if uploaded_pdf:
                     result = response.json()
                     summary = result["summary"]
                     
-                    # Update local session state (for UI display)
                     st.session_state["ingested_docs"].setdefault(thread_key, {})[uploaded_pdf.name] = summary
                     
                     status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
@@ -106,7 +103,6 @@ st.sidebar.subheader("Past conversations")
 if not threads:
     st.sidebar.write("No past conversations yet.")
 else:
-    # Prevent duplicate keys by using a seen set
     seen_keys = set()
 
     for thread_id in threads:
@@ -123,12 +119,10 @@ else:
 
         display_name = get_thread_display_name(tid)
 
-        # Make keys unique even if duplicate thread_id exists
         select_key = f"select-{tid}"
         delete_key = f"delete-{tid}"
 
         if select_key in seen_keys or delete_key in seen_keys:
-            # Skip rendering if key would collide (safety)
             continue
 
         seen_keys.add(select_key)
@@ -137,13 +131,28 @@ else:
         col1, col2 = st.sidebar.columns([8, 1])
 
         if col1.button(display_name, key=select_key, use_container_width=True):
-            selected_thread = tid
+            st.session_state["selected_thread_temp"] = tid
 
         if col2.button("🗑", key=delete_key, help="Delete this conversation"):
-            delete_thread(tid)
+            success = delete_thread(tid)
+            if success:
+                # Remove from session state immediately
+                if tid in st.session_state["chat_threads"]:
+                    st.session_state["chat_threads"].remove(tid)
+                
+                # Clean up related session state
+                thread_key_del = str(tid)
+                if thread_key_del in st.session_state["ingested_docs"]:
+                    del st.session_state["ingested_docs"][thread_key_del]
+                if thread_key_del in st.session_state["thread_titles"]:
+                    del st.session_state["thread_titles"][thread_key_del]
+                
+                st.success(f"Deleted {display_name}")
+                st.rerun()  # ← Critical: refresh UI with updated thread list
+            else:
+                st.error("Failed to delete conversation")
 
-
-# Handle deferred selection (if you still want to use temp flag)
+# Handle thread selection
 if "selected_thread_temp" in st.session_state:
     selected_thread = st.session_state["selected_thread_temp"]
     del st.session_state["selected_thread_temp"]
@@ -151,7 +160,7 @@ if "selected_thread_temp" in st.session_state:
 # ============================ Main Layout ========================
 st.title("Multi Utility Chatbot")
 
-# Display history (clean)
+# Display history
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -159,7 +168,6 @@ for message in st.session_state["message_history"]:
 user_input = st.chat_input("Ask about your document or use tools")
 
 if user_input:
-    # ← Only once!
     st.session_state["message_history"].append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
@@ -182,10 +190,13 @@ if user_input:
         except Exception as e:
             message_placeholder.error(str(e))
 
-    # Refresh title and doc info (same as before)
-    state = chatbot.get_state(config={"configurable": {"thread_id": thread_key}})  # ← temporary, we'll fix later
-    messages_in_graph = state.values.get("messages", [])
-    set_thread_title_from_first_message(thread_key, messages_in_graph)
+    # Refresh title and doc info
+    try:
+        state = chatbot.get_state(config={"configurable": {"thread_id": thread_key}})
+        messages_in_graph = state.values.get("messages", [])
+        set_thread_title_from_first_message(thread_key, messages_in_graph)
+    except Exception as e:
+        print(f"Warning: Could not refresh title: {e}")
 
     doc_meta = thread_document_metadata(thread_key)
     if doc_meta:
@@ -194,6 +205,7 @@ if user_input:
             f"(chunks: {doc_meta.get('chunks')}, pages: {doc_meta.get('documents')})"
         )
 
+# Switch to selected thread
 if selected_thread:
     st.session_state["thread_id"] = selected_thread
     thread_key = str(selected_thread)
@@ -208,7 +220,8 @@ if selected_thread:
             temp_messages.append({"role": "user", "content": msg.content})
         elif isinstance(msg, AIMessage) and msg.content.strip():
             temp_messages.append({"role": "assistant", "content": msg.content})
-        # ← ToolMessages are deliberately ignored here (they contain raw context/JSON)
+        # ToolMessages ignored for UI display
+
     st.session_state["message_history"] = temp_messages
 
     st.session_state["ingested_docs"].setdefault(thread_key, {})

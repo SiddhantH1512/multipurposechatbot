@@ -1,9 +1,11 @@
 from __future__ import annotations
 import os
+
+from src.config import Config
 os.environ["CHROMA_TELEMETRY_IMPL"] = "none"
 
+from psycopg_pool import ConnectionPool
 import tempfile
-import sqlite3
 from typing import Annotated, TypedDict
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
@@ -11,15 +13,38 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, START, add_messages
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_huggingface import HuggingFaceEmbeddings
 from src.models import ChatOpenAIModel
 from src.tools.tool_list import tools
-
+from langchain_postgres import PGVector, PGEngine  # alias if needed
+from sqlalchemy import text
+from src.database.engine import *
 
 load_dotenv()
+# ────────────────────────────────────────────────
+# Global / init (do this once, e.g. at module level or in a setup function)
+# ────────────────────────────────────────────────
+def get_vector_store():
+    return PGVector(
+        connection=sync_engine,                   # ← can pass Engine or AsyncEngine
+        collection_name="chatbot_documents",
+        embeddings=embeddings,
+        distance_strategy="cosine",
+    )
 
+# Optional: ensure extension is enabled (can run once)
+async def ensure_extension():
+    async with async_engine.connect() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        await conn.commit()
+    print("pgvector extension ensured.")
+
+# Collection / table name — choose something stable
+COLLECTION_NAME = "chatbot_documents"
+
+# Create / get vector store
 # ========================== CONFIG ==========================
 embeddings = HuggingFaceEmbeddings(
     model_name="BAAI/bge-small-en-v1.5",
@@ -34,11 +59,7 @@ CHROMA_PATH = "chroma_db"
 COLLECTION_NAME = "ai_ml_documents"
 
 # Initialize Chroma (persistent)
-vector_store = Chroma(
-    collection_name=COLLECTION_NAME,
-    embedding_function=embeddings,
-    persist_directory=CHROMA_PATH,
-)
+vector_store = get_vector_store()
 
 # ========================== INGESTION (NEW) ==========================
 def ingest_pdf(file_bytes: bytes, thread_id: str, filename: str = None) -> dict:
@@ -69,15 +90,23 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: str = None) -> dict:
 
         vector_store.add_documents(chunks)
 
-        conn = sqlite3.connect("chatbot.db")
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO thread_metadata 
-            (thread_id, filename, documents, chunks, index_path)
-            VALUES (?, ?, ?, ?, ?)
-        """, (str(thread_id), filename, len(docs), len(chunks), CHROMA_PATH))
-        conn.commit()
-        conn.close()
+        with sync_engine.connect() as conn:           # ← this is the correct call
+            conn.execute(text("""
+                INSERT INTO thread_metadata 
+                (thread_id, filename, documents, chunks)
+                VALUES (:thread_id, :filename, :documents, :chunks)
+                ON CONFLICT (thread_id) DO UPDATE SET
+                    filename = EXCLUDED.filename,
+                    documents = EXCLUDED.documents,
+                    chunks = EXCLUDED.chunks,
+                    updated_at = CURRENT_TIMESTAMP
+            """), {
+                "thread_id": str(thread_id),
+                "filename": filename,
+                "documents": len(docs),
+                "chunks": len(chunks),
+            })
+            conn.commit()
 
         return {
             "filename": filename,
@@ -120,9 +149,19 @@ Never stay silent after receiving context. Always produce an answer."""
 
 tool_node = ToolNode(tools)
 
-# Checkpointer (SQLite stays)
-conn = sqlite3.connect("chatbot.db", check_same_thread=False)
-checkpointer = SqliteSaver(conn=conn)
+pool = ConnectionPool(Config.POSTGRES_CONNINFO)  # add min_size=4, max_size=20 etc. if needed
+
+checkpointer = PostgresSaver(pool)
+from psycopg import Connection
+
+with pool.connection() as conn:
+    conn.autocommit = True
+    temp_checkpointer = PostgresSaver(conn)
+    temp_checkpointer.setup()
+    print("Checkpointer schema created successfully")
+
+# Then create the regular checkpointer with the pool
+checkpointer = PostgresSaver(pool)
 
 # ========================== GRAPH ==========================
 graph = StateGraph(ChatState)

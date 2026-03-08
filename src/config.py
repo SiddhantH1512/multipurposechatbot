@@ -14,3 +14,11 @@ class Config:
     LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", None)
     LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", None)
     ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", None)
+    POSTGRES_CONNECTION = os.getenv("POSTGRES_CONNECTION")
+    POSTGRES_CONNINFO = (
+        "host=localhost "
+        "port=5433 "
+        "dbname=chatbot_db "
+        "user=postgres "
+        "password=Siddhant1512!"
+    )
