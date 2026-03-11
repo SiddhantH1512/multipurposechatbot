@@ -8,21 +8,21 @@ async def init_all_tables():
         # ────────────────────────────────────────────────
         # 1. Your application metadata table
         # ────────────────────────────────────────────────
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS thread_metadata (
-                thread_id TEXT PRIMARY KEY,
-                filename TEXT,
-                documents INTEGER DEFAULT 0,
-                chunks INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """))
+        # await conn.execute(text("""
+        #     CREATE TABLE IF NOT EXISTS thread_metadata (
+        #         thread_id TEXT PRIMARY KEY,
+        #         filename TEXT,
+        #         documents INTEGER DEFAULT 0,
+        #         chunks INTEGER DEFAULT 0,
+        #         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        #         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        #     );
+        # """))
 
-        await conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_thread_metadata_created_at
-            ON thread_metadata (created_at DESC);
-        """))
+        # await conn.execute(text("""
+        #     CREATE INDEX IF NOT EXISTS idx_thread_metadata_created_at
+        #     ON thread_metadata (created_at DESC);
+        # """))
 
         # ────────────────────────────────────────────────
         # 2. LangGraph checkpointer tables - CORRECTED SCHEMA
