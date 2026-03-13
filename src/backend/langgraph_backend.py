@@ -1,12 +1,17 @@
 from __future__ import annotations
 import os
 
+from fastapi import Depends
+
+from src.auth.jwt import get_current_user
 from src.config import Config
+from src.database.engine import get_async_session
+from src.database.table_models import User
 os.environ["CHROMA_TELEMETRY_IMPL"] = "none"
 
 from psycopg_pool import ConnectionPool
 import tempfile
-from typing import Annotated, TypedDict
+from typing import Annotated, Optional, TypedDict
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
@@ -21,6 +26,7 @@ from src.tools.tool_list import tools
 from langchain_postgres import PGVector, PGEngine  # alias if needed
 from sqlalchemy import text
 from src.database.engine import *
+from sqlalchemy.ext.asyncio import AsyncSession
 
 load_dotenv()
 # ────────────────────────────────────────────────
@@ -62,7 +68,7 @@ COLLECTION_NAME = "ai_ml_documents"
 vector_store = get_vector_store()
 
 # ========================== INGESTION (NEW) ==========================
-def ingest_pdf(file_bytes: bytes, thread_id: str, filename: str = None) -> dict:
+async def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None, session: AsyncSession = Depends(get_async_session), current_user: User = Depends(get_current_user)) -> dict:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
         f.write(file_bytes)
         temp_path = f.name
@@ -90,23 +96,23 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: str = None) -> dict:
 
         vector_store.add_documents(chunks)
 
-        with sync_engine.connect() as conn:           # ← this is the correct call
-            conn.execute(text("""
-                INSERT INTO thread_metadata 
-                (thread_id, filename, documents, chunks)
-                VALUES (:thread_id, :filename, :documents, :chunks)
-                ON CONFLICT (thread_id) DO UPDATE SET
-                    filename = EXCLUDED.filename,
-                    documents = EXCLUDED.documents,
-                    chunks = EXCLUDED.chunks,
-                    updated_at = CURRENT_TIMESTAMP
-            """), {
-                "thread_id": str(thread_id),
-                "filename": filename,
-                "documents": len(docs),
-                "chunks": len(chunks),
-            })
-            conn.commit()
+        await session.execute(text("""
+            INSERT INTO thread_metadata 
+            (thread_id, filename, documents, chunks, user_id)
+            VALUES (:thread_id, :filename, :documents, :chunks, :user_id)
+            ON CONFLICT (thread_id) DO UPDATE SET
+                filename = EXCLUDED.filename,
+                documents = EXCLUDED.documents,
+                chunks = EXCLUDED.chunks,
+                user_id = EXCLUDED.user_id,
+                updated_at = CURRENT_TIMESTAMP
+        """), {
+            "thread_id": str(thread_id),
+            "filename": filename,
+            "documents": len(docs),
+            "chunks": len(chunks),
+            "user_id": current_user.id            # ← now it exists
+        })
 
         return {
             "filename": filename,

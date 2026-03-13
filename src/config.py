@@ -22,3 +22,4 @@ class Config:
         "user=postgres "
         "password=Siddhant1512!"
     )
+    SECRET_KEY = os.getenv("SECRET_KEY", None)

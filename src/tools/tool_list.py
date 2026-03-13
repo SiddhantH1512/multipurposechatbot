@@ -12,7 +12,13 @@ from langchain_core.tools import tool
 import json
 
 model = ChatGrokModel()
-_reranker = FlashrankRerank()
+def get_reranker():
+    """Lazy-load Flashrank reranker only when first used"""
+    global _reranker
+    if '_reranker' not in globals():
+        from langchain_community.document_compressors import FlashrankRerank
+        globals()['_reranker'] = FlashrankRerank()  # or specify model_name="ms-marco-MultiBERT-L-12"
+    return _reranker
 
 search = DuckDuckGoSearchRun(region="us-en")
 @tool
@@ -152,6 +158,7 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> str:
         print("[RAG] Falling back to vector-only")
 
     try:
+        _reranker = get_reranker()
         compression_retriever = ContextualCompressionRetriever(
             base_compressor=_reranker,
             base_retriever=ensemble

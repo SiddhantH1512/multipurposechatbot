@@ -1,10 +1,13 @@
 import os
 
-from sqlalchemy import text
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy import select, text
 
-from src.database.engine import async_engine
+from src.auth.jwt import create_access_token, get_current_user, verify_password
+from src.database.engine import async_engine, get_async_session, get_async_session_dep
+from src.database.table_models import User
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, Depends, FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from src.backend.langgraph_backend import chatbot, ingest_pdf
 from src.backend.thread_service import retrieve_all_threads, thread_document_metadata
@@ -12,6 +15,7 @@ from src.backend.thread_service import load_conversation
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from fastapi.responses import StreamingResponse
 from fastapi import Form, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 app = FastAPI(
@@ -26,57 +30,53 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.post("/ingest")
+router = APIRouter()  # or include in your existing router
+
+@router.post("/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
-    thread_id: str = Form(...)
+    thread_id: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session_dep),
 ):
     """
-    Async endpoint to upload and index a PDF for a given thread.
-    Uses async_engine for any manual DB operations.
+    Async endpoint to upload and index a PDF.
+    - Only HR can ingest
+    - Uses the same transaction/session for all DB writes
     """
+    if current_user.role != "HR":
+        raise HTTPException(status_code=403, detail="Only HR can ingest documents")
+
     if not thread_id:
         raise HTTPException(status_code=400, detail="thread_id is required")
 
     try:
-        # Read file contents (async-friendly)
+        # Read file contents asynchronously
         contents = await file.read()
 
-        # Call your existing ingestion function
-        # (make sure ingest_pdf is compatible — see notes below)
-        summary = ingest_pdf(
+        # Call async ingestion function — passes the session
+        summary = await ingest_pdf(
             file_bytes=contents,
             thread_id=thread_id,
-            filename=file.filename
+            filename=file.filename,
+            session=session,                      # ← pass the open session
         )
 
-        # Optional: If you still need to do extra manual DB writes here,
-        # do it asynchronously like this:
-        async with async_engine.connect() as conn:
-            await conn.execute(text("""
-                INSERT INTO thread_metadata 
-                (thread_id, filename, documents, chunks)
-                VALUES (:tid, :fn, :docs, :chunks)
-                ON CONFLICT (thread_id) DO UPDATE SET
-                    filename = EXCLUDED.filename,
-                    documents = EXCLUDED.documents,
-                    chunks = EXCLUDED.chunks,
-                    updated_at = CURRENT_TIMESTAMP
-            """), {
-                "tid": thread_id,
-                "fn": file.filename,
-                "docs": summary.get("documents", 0),
-                "chunks": summary.get("chunks", 0),
-            })
-            await conn.commit()
+        # Optional: If you want to do extra writes here (not needed anymore),
+        # you can do them in the same session — they will be committed together
+        # await session.execute(...)
+
+        # No manual commit/close needed — get_async_session handles it
 
         return JSONResponse(content={
             "status": "success",
             "summary": summary,
-            "thread_id": thread_id
+            "thread_id": thread_id,
+            "uploaded_by": current_user.email,   # optional feedback
         })
 
     except Exception as e:
+        # The session will auto-rollback on exception
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
 
@@ -149,5 +149,30 @@ async def get_conversation(thread_id: str):
     return {"thread_id": thread_id, "messages": history}
 
 
+from fastapi import Form
+
+@app.post("/auth/token")
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    session: AsyncSession = Depends(get_async_session_dep)
+):
+    result = await session.execute(select(User).where(User.email == form_data.username))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    
+    access_token = create_access_token(data={"sub": user.email})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/auth/me", response_model=dict)
+async def get_current_user_profile(current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "role": current_user.role.value if hasattr(current_user.role, "value") else current_user.role,
+        "department": current_user.department,
+        "designation": current_user.designation,
+        "is_active": current_user.is_active
+    }
 
 
