@@ -1,14 +1,11 @@
-# src/auth/utils.py
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Optional
-
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from src.database.table_models import User
 from src.database.engine import get_async_session, get_async_session_dep   # ← your session dependency
 from src.config import Config

@@ -42,6 +42,37 @@ thread_docs = st.session_state["ingested_docs"].setdefault(thread_key, {})
 threads = st.session_state["chat_threads"][::-1]  # newest first
 selected_thread = None
 
+
+if "token" not in st.session_state or not st.session_state.get("token"):
+    st.title("Login to PolicyIQ")
+    
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+    
+    if st.button("Login"):
+        if not email or not password:
+            st.error("Please enter email and password")
+        else:
+            try:
+                resp = httpx.post(
+                    f"{API_BASE_URL}/auth/token",
+                    data={"username": email, "password": password},
+                    timeout=10.0
+                )
+                if resp.status_code == 200:
+                    tokens = resp.json()
+                    st.session_state["token"] = tokens["access_token"]
+                    st.success("Logged in successfully!")
+                    st.rerun()
+                else:
+                    st.error(f"Login failed: {resp.text}")
+            except Exception as e:
+                st.error(f"Connection error: {str(e)}")
+    
+    st.stop()
+
+
+
 # ============================ Sidebar ============================
 st.sidebar.title("LangGraph PDF Chatbot")
 st.sidebar.markdown(f"**Thread ID:** `{thread_key}`")
@@ -59,44 +90,81 @@ if thread_docs:
 else:
     st.sidebar.info("No PDF indexed yet.")
 
-uploaded_pdf = st.sidebar.file_uploader("Upload a PDF for this chat", type=["pdf"])
-if uploaded_pdf:
-    thread_key = str(st.session_state["thread_id"])
+# ── HR-only document upload ──
+if "is_hr" not in st.session_state:
+    st.session_state["is_hr"] = False
 
-    if uploaded_pdf.name in st.session_state["ingested_docs"].get(thread_key, {}):
-        st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
-    else:
-        with st.sidebar.status("Uploading & Indexing PDF…", expanded=True) as status_box:
-            try:
-                files = {"file": (uploaded_pdf.name, uploaded_pdf.getvalue(), "application/pdf")}
-                data = {"thread_id": thread_key}
+# Fetch user role once (runs only if token exists and role not yet loaded)
+if st.session_state.get("token") and not st.session_state["is_hr"]:
+    try:
+        headers = {"Authorization": f"Bearer {st.session_state.token}"}
+        resp = httpx.get(f"{API_BASE_URL}/auth/me", headers=headers, timeout=5.0)
+        if resp.status_code == 200:
+            user = resp.json()
+            st.session_state["user_role"] = user.get("role")
+            st.session_state["is_hr"] = user.get("role") == "HR"
+            st.session_state["user_department"] = user.get("department")
+        else:
+            st.session_state["is_hr"] = False
+    except Exception as e:
+        print(f"Failed to fetch user role: {e}")
+        st.session_state["is_hr"] = False
 
-                response = httpx.post(
-                    f"{API_BASE_URL}/ingest",
-                    files=files,
-                    data=data,
-                    timeout=httpx.Timeout(300.0, connect=10.0, read=300.0)
-                )
+# Now conditionally show the uploader
+if st.session_state.get("is_hr", False):
+    uploaded_pdf = st.sidebar.file_uploader(
+        "Upload HR policy document (global)",
+        type=["pdf"],
+        help="Only HR users can upload organization-wide documents."
+    )
 
-                if response.status_code == 200:
-                    result = response.json()
-                    summary = result["summary"]
-                    
-                    st.session_state["ingested_docs"].setdefault(thread_key, {})[uploaded_pdf.name] = summary
-                    
-                    status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
-                    st.sidebar.success(
-                        f"Indexed `{summary.get('filename')}` "
-                        f"({summary.get('chunks')} chunks, {summary.get('documents')} pages)"
+    if uploaded_pdf:
+        thread_key = str(st.session_state["thread_id"])
+
+        # Optional: still check if already processed (per-thread UI feedback)
+        if uploaded_pdf.name in st.session_state["ingested_docs"].get(thread_key, {}):
+            st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
+        else:
+            with st.sidebar.status("Uploading & Indexing PDF…", expanded=True) as status_box:
+                try:
+                    files = {"file": (uploaded_pdf.name, uploaded_pdf.getvalue(), "application/pdf")}
+                    data = {"thread_id": thread_key}
+
+                    headers = {"Authorization": f"Bearer {st.session_state.token}"}
+
+                    response = httpx.post(
+                        f"{API_BASE_URL}/ingest",
+                        files=files,
+                        data=data,
+                        headers=headers,
+                        timeout=httpx.Timeout(300.0, connect=10.0, read=300.0)
                     )
-                else:
-                    error_msg = response.json().get("detail", "Unknown error")
-                    status_box.update(label=f"❌ Failed: {error_msg}", state="error", expanded=True)
-                    st.sidebar.error(f"Ingestion failed: {error_msg}")
 
-            except Exception as e:
-                status_box.update(label=f"❌ Error: {str(e)}", state="error", expanded=True)
-                st.sidebar.error(f"Upload error: {str(e)}")
+                    if response.status_code == 200:
+                        result = response.json()
+                        summary = result["summary"]
+                        
+                        st.session_state["ingested_docs"].setdefault(thread_key, {})[uploaded_pdf.name] = summary
+                        
+                        status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
+                        st.sidebar.success(
+                            f"Indexed `{summary.get('filename')}` "
+                            f"({summary.get('chunks')} chunks, {summary.get('documents')} pages)"
+                        )
+                    else:
+                        error_msg = response.json().get("detail", "Unknown error")
+                        status_box.update(label=f"❌ Failed: {error_msg}", state="error", expanded=True)
+                        st.sidebar.error(f"Ingestion failed: {error_msg}")
+
+                except Exception as e:
+                    status_box.update(label=f"❌ Error: {str(e)}", state="error", expanded=True)
+                    st.sidebar.error(f"Upload error: {str(e)}")
+
+elif not st.session_state.get("token"):
+    st.sidebar.warning("Please log in to access document upload.")
+else:
+    st.sidebar.info("📄 Document upload is restricted to HR users only.")
+    uploaded_pdf = None
 
 st.sidebar.subheader("Past conversations")
 
@@ -156,6 +224,13 @@ else:
 if "selected_thread_temp" in st.session_state:
     selected_thread = st.session_state["selected_thread_temp"]
     del st.session_state["selected_thread_temp"]
+
+
+if st.sidebar.button("Logout"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
 
 # ============================ Main Layout ========================
 st.title("Multi Utility Chatbot")

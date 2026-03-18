@@ -59,7 +59,8 @@ async def ingest_document(
             file_bytes=contents,
             thread_id=thread_id,
             filename=file.filename,
-            session=session,                      # ← pass the open session
+            session=session,
+            current_user=current_user
         )
 
         # Optional: If you want to do extra writes here (not needed anymore),

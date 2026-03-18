@@ -89,10 +89,12 @@ async def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] 
 
         for chunk in chunks:
             chunk.metadata.update({
-                "thread_id": str(thread_id),
-                "filename": filename or "unknown.pdf",
-                "page": chunk.metadata.get("page", 0) + 1
-            })
+            "visibility": "global",
+            "department": current_user.department,
+            "uploaded_by": current_user.id,
+            "filename": filename,
+            "thread_id": thread_id
+        })
 
         vector_store.add_documents(chunks)
 
@@ -115,10 +117,11 @@ async def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] 
         })
 
         return {
-            "filename": filename,
-            "documents": len(docs),
-            "chunks": len(chunks),
-        }
+        "filename": filename,
+        "documents": len(docs),
+        "chunks": len(chunks),
+        "visibility": "global"
+    }
     finally:
         os.unlink(temp_path)
 
