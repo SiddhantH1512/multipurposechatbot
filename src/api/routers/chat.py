@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from sqlalchemy import text
 from src.auth.jwt import get_current_user
+from src.backend.rate_limiter import check_rate_limit
 from src.database.engine import get_async_session_dep, rls_context
 from src.backend.langgraph_backend import build_chatbot
 from src.database.table_models import User
@@ -14,7 +15,7 @@ chat_router = APIRouter(prefix="/chat", tags=["chat"])
 async def send_message(
     message: str = Form(...),
     thread_id: str = Form(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(check_rate_limit("/chat")),
     session: AsyncSession = Depends(get_async_session_dep)
 ):
     if not thread_id or not message:
