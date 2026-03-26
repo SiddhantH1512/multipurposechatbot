@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from src.auth.jwt import get_current_user
 from src.backend.langgraph_backend import ingest_pdf
+from src.backend.rate_limiter import check_rate_limit
 from src.database.engine import get_async_session_dep, rls_context
 from src.database.table_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ async def ingest_document(
     visibility: str = Form("global"),
     target_department: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
+    rate_check: User = Depends(check_rate_limit("/ingest")),
     session: AsyncSession = Depends(get_async_session_dep),
 ):
     # HR-only check
