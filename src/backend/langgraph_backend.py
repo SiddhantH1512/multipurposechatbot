@@ -1,26 +1,31 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+import datetime
 import os
+import uuid
+
 from fastapi import Depends
+
 from src.auth.jwt import get_current_user
 from src.config import Config
 from src.database.engine import get_async_session
 from src.database.table_models import User
 os.environ["CHROMA_TELEMETRY_IMPL"] = "none"
+
 from psycopg_pool import ConnectionPool
 import tempfile
 from typing import Annotated, Optional, TypedDict
 from dotenv import load_dotenv
+from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph import StateGraph, START, add_messages
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, AIMessage
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_huggingface import HuggingFaceEmbeddings
 from src.models import ChatOpenAIModel
 from src.tools.tool_list import tools, build_rag_tool, email_action_extractor, calculator, get_stock_price, search
-from langchain_postgres import PGVector
+from langchain_postgres import PGVector, PGEngine  # alias if needed
 from sqlalchemy import text
 from src.database.engine import *
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +49,10 @@ async def ensure_extension():
         await conn.commit()
     print("pgvector extension ensured.")
 
+# Collection / table name — choose something stable
+COLLECTION_NAME = "chatbot_documents"
 
+# Create / get vector store
 # ========================== CONFIG ==========================
 embeddings = HuggingFaceEmbeddings(
     model_name="BAAI/bge-small-en-v1.5",
@@ -55,7 +63,10 @@ embeddings = HuggingFaceEmbeddings(
 llm = ChatOpenAIModel()
 llm_with_tools = llm.bind_tools(tools)
 
-# Create / get vector store
+CHROMA_PATH = "chroma_db"
+COLLECTION_NAME = "ai_ml_documents"
+
+# Initialize Chroma (persistent)
 vector_store = get_vector_store()
 
 # ========================== INGESTION (NEW) ==========================
@@ -91,17 +102,20 @@ async def ingest_pdf(
             # Use provided department if specified, otherwise fall back to current_user's department
             doc_department = department if department else current_user.department
 
+        # Stable UUID for this document — used to update visibility later
+        document_id = str(uuid.uuid4())
+
         for chunk in chunks:
             metadata = {
+                "document_id": document_id,
                 "visibility": visibility,
                 "department": doc_department,
                 "uploaded_by": current_user.id,
                 "uploaded_by_email": current_user.email,
                 "filename": filename,
                 "page": chunk.metadata.get("page", 0) + 1,
-                "uploaded_at": datetime.now(timezone.utc).isoformat()
+                "uploaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
-            
             chunk.metadata.update(metadata)
 
         vector_store.add_documents(chunks)
@@ -109,8 +123,8 @@ async def ingest_pdf(
         # Update thread_metadata - this is for conversation tracking, not document access
         await session.execute(text("""
             INSERT INTO thread_metadata 
-            (thread_id, filename, documents, chunks, user_id, department, is_global)
-            VALUES (:thread_id, :filename, :documents, :chunks, :user_id, :dept, :is_global)
+            (thread_id, filename, documents, chunks, user_id, department, is_global, document_id)
+            VALUES (:thread_id, :filename, :documents, :chunks, :user_id, :dept, :is_global, :document_id)
             ON CONFLICT (thread_id) DO UPDATE SET
                 filename = EXCLUDED.filename,
                 documents = EXCLUDED.documents,
@@ -118,6 +132,7 @@ async def ingest_pdf(
                 user_id = EXCLUDED.user_id,
                 department = EXCLUDED.department,
                 is_global = EXCLUDED.is_global,
+                document_id = EXCLUDED.document_id,
                 updated_at = CURRENT_TIMESTAMP
         """), {
             "thread_id": str(thread_id),
@@ -126,7 +141,8 @@ async def ingest_pdf(
             "chunks": len(chunks),
             "user_id": current_user.id,
             "dept": current_user.department,
-            "is_global": visibility == "global"
+            "is_global": visibility == "global",
+            "document_id": document_id
         })
 
         return {
@@ -136,39 +152,27 @@ async def ingest_pdf(
             "department": doc_department,
             "visibility": visibility,
             "uploaded_by": current_user.email,
+            "document_id": document_id,
             "target_department": department if visibility == "dept" else None 
         }
     finally:
         os.unlink(temp_path)
 
-# ========================== STATE & NODES ==========================
+# ========================== STATE ==========================
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
-# chat_node and tool_node are built per-request inside _build_graph()
-
-pool = ConnectionPool(Config.POSTGRES_CONNINFO)  # add min_size=4, max_size=20 etc. if needed
-
-checkpointer = PostgresSaver(pool)
-# from psycopg import Connection
-
-# with pool.connection() as conn:
-#     conn.autocommit = True
-#     temp_checkpointer = PostgresSaver(conn)
-#     temp_checkpointer.setup()
-#     print("Checkpointer schema created successfully")
-
-# Then create the regular checkpointer with the pool
+# ========================== CHECKPOINTER ====================
+pool = ConnectionPool(Config.POSTGRES_CONNINFO)
 checkpointer = PostgresSaver(pool)
 
-# ========================== GRAPH ==========================
+# ========================== GRAPH FACTORY ===================
 def _build_graph(tool_list):
-    """Build and compile a LangGraph chatbot with the given tool list."""
+    """Compile a LangGraph chatbot with the given tool list."""
     _llm_with_tools = llm.bind_tools(tool_list)
 
     def _chat_node(state: ChatState, config=None):
-        thread_id = config.get("configurable", {}).get("thread_id") if config else None
-        system_prompt = f"""You are a helpful organisational assistant answering questions about HR policies and company documents.
+        system_prompt = """You are a helpful organisational assistant answering questions about HR policies and company documents.
 
 Document-question rules:
 1. For any question that may relate to company policies or uploaded documents → ALWAYS call rag_tool first.
@@ -190,14 +194,14 @@ Document-question rules:
     return g.compile(checkpointer=checkpointer)
 
 
-# Default chatbot (HR-level, sees all docs) — used by thread_service / CLI
+# Default chatbot — HR-level access, used by thread_service / CLI
 chatbot = _build_graph(tools)
 
 
 def build_chatbot(user: "User"):
     """
     Returns a compiled chatbot graph whose rag_tool is scoped to the given user.
-    Call this per-request in the chat endpoint.
+    Called per-request in the chat endpoint.
     """
     dept = user.department or "General"
     role = user.role.value if hasattr(user.role, "value") else str(user.role)

@@ -46,6 +46,7 @@ class ThreadMetadata(Base):
     user_id = Column(Integer, nullable=True)
     department = Column(String, nullable=False, server_default='General')
     is_global = Column(Boolean, nullable=False, server_default=text('true'))
+    document_id = Column(String, nullable=True, index=True)
 
     __table_args__ = (
         sa.Index(
