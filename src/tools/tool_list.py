@@ -2,6 +2,7 @@ from typing import Optional
 from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
 import requests
+from src.backend.security import sanitize_input
 from src.schemas.email_schema import EmailExtraction
 from src.models import ChatGrokModel
 from src.prompts.email_prompts import email_prompt_template
@@ -193,13 +194,16 @@ def build_rag_tool(user_department: str, user_role: str):
             )
             sources.append(f"[{i}] {filename} – page {page} (uploaded by: {uploaded_by})")
 
-        return (
+        readable_output = (
             "Relevant excerpts from organisational documents (hybrid search + reranked):\n\n"
             + "\n".join(context_blocks)
             + "\n\nSources:\n"
             + "\n".join(sources)
         )
-
+        
+        sanitized_output, _ = sanitize_input(readable_output)
+        return sanitized_output
+    
     return rag_tool
 
 

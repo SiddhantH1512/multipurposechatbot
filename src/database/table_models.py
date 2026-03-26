@@ -1,9 +1,10 @@
 from enum import Enum as PyEnum
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, text
+from sqlalchemy import Column, ForeignKey, Integer, String, Boolean, DateTime, Text, text
 import sqlalchemy as sa
+from sqlalchemy.orm import relationship
 from sqlalchemy.types import Enum as SAEnum
 from sqlalchemy.ext.declarative import declarative_base
-from datetime import datetime
+import datetime
 
 Base = declarative_base()
 
@@ -31,7 +32,7 @@ class User(Base):
     department = Column(String, nullable=False, default="General")
     designation = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc).isoformat())
 
 
 class ThreadMetadata(Base):
@@ -56,3 +57,18 @@ class ThreadMetadata(Base):
             postgresql_ops={"created_at": "DESC"}
         ),
     )
+
+
+class AuditLog(Base):
+    """Audit log for tracking user actions (ingest, chat, etc.)."""
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    action = Column(String, nullable=False)           # e.g., "ingest_document", "chat_message"
+    resource = Column(String, nullable=False)         # e.g., filename or thread_id
+    details = Column(Text, nullable=True)             # optional extra info
+    timestamp = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc).isoformat(), nullable=False)
+
+    # Optional relationship (for easier querying later)
+    user = relationship("User", backref="audit_logs")

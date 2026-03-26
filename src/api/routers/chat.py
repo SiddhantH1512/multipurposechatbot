@@ -3,7 +3,9 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from sqlalchemy import text
 from src.auth.jwt import get_current_user
+from src.backend.audit import log_audit
 from src.backend.rate_limiter import check_rate_limit
+from src.backend.security import sanitize_input
 from src.database.engine import get_async_session_dep, rls_context
 from src.backend.langgraph_backend import build_chatbot
 from src.database.table_models import User
@@ -20,6 +22,23 @@ async def send_message(
 ):
     if not thread_id or not message:
         raise HTTPException(status_code=400, detail="thread_id and message are required")
+    
+    # Sanitize user input
+    try:
+        sanitized_message, pii_types = sanitize_input(message)
+        if pii_types:
+            print(f"[SECURITY] PII redacted for user {current_user.email}: {pii_types}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # === AUDIT LOGGING (only this line added) ===
+    await log_audit(
+        user_id=current_user.id,
+        action="chat_message",
+        resource=thread_id,
+        details=f"length={len(sanitized_message)}",
+        session=session
+    )
     
     # Ensure thread metadata exists for this user (for conversation isolation)
     result = await session.execute(
@@ -45,7 +64,7 @@ async def send_message(
  
             try:
                 for chunk, _ in user_chatbot.stream(
-                    {"messages": [HumanMessage(content=message)]},
+                    {"messages": [HumanMessage(content=sanitized_message)]},
                     config=config,
                     stream_mode="messages",
                 ):

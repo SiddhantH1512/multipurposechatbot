@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from src.auth.jwt import get_current_user
+from src.backend.audit import log_audit
 from src.backend.langgraph_backend import ingest_pdf
 from src.backend.rate_limiter import check_rate_limit
 from src.database.engine import get_async_session_dep, rls_context
@@ -39,6 +40,15 @@ async def ingest_document(
             current_user=current_user,
             visibility=visibility,
             department=target_department
+        )
+
+        # === AUDIT LOGGING (only this block added) ===
+        await log_audit(
+            user_id=current_user.id,
+            action="ingest_document",
+            resource=file.filename or "unknown.pdf",
+            details=f"visibility={visibility}, department={target_department or 'ALL'}",
+            session=session
         )
         
         return JSONResponse(content={
