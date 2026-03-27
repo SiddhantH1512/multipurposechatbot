@@ -10,9 +10,29 @@ from src.database.engine import get_async_session_dep, rls_context
 from src.backend.langgraph_backend import build_chatbot
 from src.database.table_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
- 
+
 chat_router = APIRouter(prefix="/chat", tags=["chat"])
- 
+
+
+# ── Helper: emit readable Self-RAG status lines ───────────────────────────
+def _self_rag_status(faithfulness_grade: str, retry_count: int, rewrite_count: int) -> str:
+    lines = []
+    
+    if rewrite_count > 0:
+        lines.append(f"✏️ **Query improved** ({rewrite_count} rewrite(s))")
+    if retry_count > 0:
+        lines.append(f"🔄 **Answer refined** (after {retry_count} attempt(s))")
+
+    if faithfulness_grade == "fully_supported":
+        lines.append("✅ **Document support:** Fully Supported")
+    elif faithfulness_grade == "partially_supported":
+        lines.append("⚠️ **Document support:** Partially Supported")
+    elif faithfulness_grade == "not_supported":
+        lines.append("❌ **Document support:** Not Supported")
+
+    return "\n".join(lines) + "\n\n" if lines else ""
+
+
 @chat_router.post("")
 async def send_message(
     message: str = Form(...),
@@ -22,16 +42,21 @@ async def send_message(
 ):
     if not thread_id or not message:
         raise HTTPException(status_code=400, detail="thread_id and message are required")
-    
-    # Sanitize user input
+
+    # Sanitize input
     try:
         sanitized_message, pii_types = sanitize_input(message)
         if pii_types:
             print(f"[SECURITY] PII redacted for user {current_user.email}: {pii_types}")
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    # === AUDIT LOGGING (only this line added) ===
+        # Graceful handling for prompt injection / dangerous input
+        def blocked_generate():
+            yield "🚫 **Security Notice**: Your message was blocked for safety reasons.\n\n"
+            yield "It appears to contain potentially harmful instructions (such as prompt injection attempts).\n\n"
+            yield "Please rephrase your question normally."
+        
+        return StreamingResponse(blocked_generate(), media_type="text/event-stream")
+
     await log_audit(
         user_id=current_user.id,
         action="chat_message",
@@ -39,8 +64,8 @@ async def send_message(
         details=f"length={len(sanitized_message)}",
         session=session
     )
-    
-    # Ensure thread metadata exists for this user (for conversation isolation)
+
+    # Ensure thread metadata exists
     result = await session.execute(
         text("SELECT 1 FROM thread_metadata WHERE thread_id = :tid AND user_id = :uid"),
         {"tid": thread_id, "uid": current_user.id}
@@ -54,35 +79,89 @@ async def send_message(
             {"tid": thread_id, "uid": current_user.id, "dept": current_user.department}
         )
         await session.commit()
-    
+
     async with rls_context(session, current_user):
-        # Build a per-request chatbot whose rag_tool is scoped to this user
         user_chatbot = build_chatbot(current_user)
- 
+
         def generate():
-            config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 50}
- 
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": 60,
+            }
+
             try:
-                for chunk, _ in user_chatbot.stream(
-                    {"messages": [HumanMessage(content=sanitized_message)]},
+                final_state = None
+                rag_status_shown = False
+
+                for event in user_chatbot.stream(
+                    {
+                        "messages": [HumanMessage(content=sanitized_message)],
+                        "original_query": sanitized_message,
+                        "current_query": sanitized_message,
+                        "retrieved_context": "",
+                        "relevant_context": "",
+                        "generated_answer": "",
+                        "faithfulness_grade": "",
+                        "unsupported_claims": [],
+                        "retry_count": 0,
+                        "rewrite_count": 0,
+                        "need_retrieval": True,
+                        "skip_retrieval": False,
+                        "answer_useful": False,
+                    },
                     config=config,
-                    stream_mode="messages",
+                    stream_mode="values",
                 ):
-                    if isinstance(chunk, AIMessage) and chunk.content:
-                        yield chunk.content
-                    elif isinstance(chunk, ToolMessage):
-                        tool_name = getattr(chunk, "name", "unknown")
-                        if tool_name == "rag_tool":
-                            yield "📄 **Searching organisational documents...**\n\n"
-                        elif tool_name == "get_stock_price":
-                            yield "📈 **Fetching latest stock price...**\n\n"
-                        elif tool_name == "calculator":
-                            yield "🧮 **Calculating...**\n\n"
-                        else:
-                            yield f"🔧 **Calling {tool_name} tool...**\n\n"
+                    final_state = event
+
+                    # === Real-time Status Messages (show only once) ===
+                    msgs = event.get("messages", [])
+                    if msgs:
+                        last_msg = msgs[-1]
+
+                        # Show "Searching documents" only once
+                        if (isinstance(last_msg, ToolMessage) and 
+                            getattr(last_msg, "name", "") == "rag_tool" and 
+                            not rag_status_shown):
+                            
+                            if event.get("skip_retrieval", False):
+                                yield "📭 **No relevant documents found — answering from general knowledge...**\n\n"
+                            else:
+                                yield "📄 **Searching organisational documents...**\n\n"
+                            rag_status_shown = True
+
+                        # Show refinement status
+                        retry = event.get("retry_count", 0)
+                        if retry > 0 and isinstance(last_msg, AIMessage) and last_msg.content:
+                            yield f"⚠️ **Refining answer for accuracy (attempt {retry})...**\n\n"
+
+                # === Final Output ===
+                if final_state:
+                    # Self-RAG status (Faithfulness, Rewrites, etc.)
+                    status = _self_rag_status(
+                        faithfulness_grade=final_state.get("faithfulness_grade", ""),
+                        retry_count=final_state.get("retry_count", 0),
+                        rewrite_count=final_state.get("rewrite_count", 0),
+                    )
+                    if status:
+                        yield status
+
+                    # Extract and stream the final AI answer
+                    answer_found = False
+                    for msg in reversed(final_state.get("messages", [])):
+                        if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                            yield msg.content
+                            answer_found = True
+                            break
+
+                    if not answer_found:
+                        yield "Sorry, I couldn't generate a response. Please try again."
+
+                else:
+                    yield "Sorry, I couldn't generate a response."
+
             except Exception as e:
-                error_msg = "Sorry, something went wrong while processing your request. Please try again."
-                print(f"Checkpoint/stream error: {str(e)}")
-                yield f"\n\n**Error:** {error_msg}"
- 
+                print(f"[Self-RAG] Stream error: {type(e).__name__}: {str(e)}")
+                yield "\n\n**Error:** Sorry, something went wrong while processing your request. Please try again."
+
         return StreamingResponse(generate(), media_type="text/event-stream")

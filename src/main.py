@@ -1,7 +1,6 @@
 import httpx
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from backend.langgraph_backend import chatbot, ingest_pdf
 from backend.thread_service import delete_thread, load_conversation, retrieve_all_threads, thread_document_metadata
 from src.backend.utils import add_thread, generate_thread_id, get_thread_display_name, reset_chat, set_thread_title_from_first_message
 
@@ -25,7 +24,7 @@ def init_session_state():
         "ingested_docs": {},
         "thread_titles": {},
         "docs_list": None,
-        "login_counter": 0  # Add counter to force refresh
+        "login_counter": 0
     }
     
     for key, default_value in defaults.items():
@@ -34,6 +33,43 @@ def init_session_state():
 
 # Initialize session state
 init_session_state()
+
+
+# ======================= Title refresh via API ===================
+def refresh_thread_title_via_api(thread_id: str):
+    """
+    Fetch conversation history for a thread via the /threads API and
+    derive a display title from the first human message.
+    Uses the stored JWT token — safe to call after every chat turn.
+    """
+    token = st.session_state.get("token")
+    if not token:
+        return
+
+    tid = str(thread_id)
+    # Already have a title for this thread — nothing to do
+    if tid in st.session_state.get("thread_titles", {}):
+        return
+
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = httpx.get(
+            f"{API_BASE_URL}/threads/{tid}",
+            headers=headers,
+            timeout=10.0,
+        )
+        if resp.status_code == 200:
+            messages = resp.json().get("messages", [])
+            # Convert API response format to LangChain HumanMessage list
+            lc_messages = [
+                HumanMessage(content=m["content"])
+                for m in messages
+                if m.get("role") == "user" and m.get("content", "").strip()
+            ]
+            set_thread_title_from_first_message(tid, lc_messages)
+    except Exception as e:
+        print(f"[Title refresh] Could not fetch thread {tid}: {e}")
+
 
 # ======================= LOGIN SCREEN ===================
 def show_login_screen():
@@ -77,7 +113,6 @@ def show_login_screen():
                         st.session_state.user_id = user.get("id")
                         st.session_state.is_hr = user.get("role") == "HR"
                         
-                        # Debug print to console
                         print(f"Login: {email} - Role: {user.get('role')} - is_hr: {st.session_state.is_hr}")
                     
                     # Step 3: Fetch user's threads
@@ -90,7 +125,6 @@ def show_login_screen():
                         if threads_resp.status_code == 200:
                             threads_data = threads_resp.json()
                             st.session_state.chat_threads = [t["thread_id"] for t in threads_data["threads"]]
-                            # Store metadata for display
                             for t in threads_data["threads"]:
                                 if t["metadata"]:
                                     st.session_state.threads_metadata[t["thread_id"]] = t["metadata"]
@@ -102,7 +136,6 @@ def show_login_screen():
                     if not st.session_state.chat_threads:
                         add_thread(st.session_state.thread_id)
                     
-                    # Increment login counter to force refresh
                     st.session_state.login_counter += 1
                     
                     st.success(f"✅ Login successful as {email} ({st.session_state.user_role})!")
@@ -115,7 +148,6 @@ def show_login_screen():
             except Exception as e:
                 st.error(f"Connection error: {str(e)}")
     
-    # Optional: Add a note about demo accounts
     with st.expander("📋 Demo Accounts"):
         st.markdown("""
         **HR Users:**
@@ -148,7 +180,6 @@ def show_chat_ui():
     """Display the main chat interface for authenticated users"""
     st.set_page_config(page_title="PolicyIQ Chatbot", layout="wide")
     
-    # Debug info in sidebar to verify state
     print(f"Current user: {st.session_state.user_email}, Role: {st.session_state.user_role}, is_hr: {st.session_state.is_hr}")
     
     thread_key = str(st.session_state["thread_id"])
@@ -163,7 +194,6 @@ def show_chat_ui():
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**🔑 Thread ID:** `{thread_key[:8]}...`")
     
-    # New Chat button
     if st.sidebar.button("➕ New Chat", use_container_width=True, key="new_chat_btn"):
         reset_chat()
         st.rerun()
@@ -183,15 +213,12 @@ def show_chat_ui():
     
     st.sidebar.markdown("---")
     
-    # ── HR-only document upload ──
-    # IMPORTANT: Force evaluation of is_hr for each render
     is_hr = st.session_state.get("is_hr", False)
     
     if is_hr:
         st.sidebar.markdown("### 📤 Document Upload")
         st.sidebar.success("✅ HR privileges detected - Upload enabled")
         
-        # Visibility selector for HR
         visibility = st.sidebar.selectbox(
             "Document Visibility",
             ["global", "dept"],
@@ -267,9 +294,7 @@ def show_chat_ui():
         st.sidebar.warning("⚠️ Please log in to access document upload.")
     else:
         st.sidebar.info("📄 Document upload is restricted to HR users only.")
-        # Debug: Show why it's restricted
         st.sidebar.caption(f"Debug: User role = {st.session_state.user_role}, is_hr = {is_hr}")
-    
 
     st.sidebar.markdown("---")
 
@@ -278,9 +303,8 @@ def show_chat_ui():
         st.sidebar.markdown("### 📋 Document Manager")
 
         if st.sidebar.button("🔄 Refresh Documents", key="refresh_docs_btn", use_container_width=True):
-            st.session_state["docs_list"] = None  # force reload
+            st.session_state["docs_list"] = None
 
-        # Fetch docs list
         if st.session_state.get("docs_list") is None:
             try:
                 headers = {"Authorization": f"Bearer {st.session_state.token}"}
@@ -350,7 +374,7 @@ def show_chat_ui():
                             if resp.status_code == 200:
                                 result = resp.json()
                                 st.success(f"✅ Updated: {result.get('message')}")
-                                st.session_state["docs_list"] = None  # refresh on next render
+                                st.session_state["docs_list"] = None
                                 st.rerun()
                             else:
                                 st.error(f"Failed: {resp.json().get('detail', resp.status_code)}")
@@ -402,14 +426,9 @@ def show_chat_ui():
         for thread_id in threads:
             tid = str(thread_id)
             
-            # Auto-set title if missing
+            # Auto-set title using the threads API (no direct chatbot access)
             if tid not in st.session_state.get("thread_titles", {}):
-                try:
-                    state = chatbot.get_state({"configurable": {"thread_id": tid}})
-                    messages = state.values.get("messages", [])
-                    set_thread_title_from_first_message(tid, messages)
-                except Exception:
-                    pass
+                refresh_thread_title_via_api(tid)
             
             display_name = get_thread_display_name(tid)
             
@@ -448,7 +467,6 @@ def show_chat_ui():
     
     # Logout button
     if st.sidebar.button("🚪 Logout", use_container_width=True, key="logout_btn"):
-        # Clear all session state
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.session_state["docs_list"] = None
@@ -459,7 +477,6 @@ def show_chat_ui():
         selected_thread = st.session_state["selected_thread_temp"]
         del st.session_state["selected_thread_temp"]
         
-        # Load selected thread
         try:
             headers = {"Authorization": f"Bearer {st.session_state.token}"}
             resp = httpx.get(
@@ -522,13 +539,8 @@ def show_chat_ui():
                 message_placeholder.error(error_msg)
                 st.session_state["message_history"].append({"role": "assistant", "content": error_msg})
         
-        # Refresh title and doc info
-        try:
-            state = chatbot.get_state(config={"configurable": {"thread_id": thread_key}})
-            messages_in_graph = state.values.get("messages", [])
-            set_thread_title_from_first_message(thread_key, messages_in_graph)
-        except Exception as e:
-            print(f"Warning: Could not refresh title: {e}")
+        # Refresh thread title via API (replaces the old chatbot.get_state() call)
+        refresh_thread_title_via_api(thread_key)
 
 # ======================= MAIN ENTRY POINT ===================
 def main():
