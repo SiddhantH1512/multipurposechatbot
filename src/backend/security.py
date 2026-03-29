@@ -14,9 +14,10 @@ from fastapi import HTTPException, status
 
 # ── Prompt Injection Patterns ──
 # Compiled for performance; case-insensitive matching.
+# ── Prompt Injection Patterns ──
 INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
-    re.compile(r"forget\s+(everything|all|prior|previous)", re.IGNORECASE),
+    re.compile(r"forget\s+(everything|all|prior|previous|your\s+system\s+prompt)", re.IGNORECASE),
     re.compile(r"you\s+are\s+now\s+(a|an)", re.IGNORECASE),
     re.compile(r"act\s+as\s+(a|an|if)", re.IGNORECASE),
     re.compile(r"jailbreak", re.IGNORECASE),
@@ -30,6 +31,9 @@ INJECTION_PATTERNS = [
     re.compile(r"new\s+instructions?\s*:", re.IGNORECASE),
     re.compile(r"ignore\s+(above|prior|all)", re.IGNORECASE),
     re.compile(r"reveal\s+(your|the)\s+(system|initial)\s+(prompt|instructions)", re.IGNORECASE),
+    re.compile(r"forget\s+your\s+system\s+prompt", re.IGNORECASE),
+    re.compile(r"remove\s+all\s+previous\s+instructions", re.IGNORECASE),
+    re.compile(r"do\s+not\s+follow\s+previous", re.IGNORECASE),
 ]
 
 # ── PII Patterns ──

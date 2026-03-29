@@ -23,8 +23,8 @@ class Config:
     # ── Database ──
     POSTGRES_CONNECTION = os.getenv("POSTGRES_CONNECTION")
     POSTGRES_CONNINFO = (
-        "host=localhost "
-        "port=5433 "
+        "host=postgres "
+        "port=5432 "
         "dbname=chatbot_db "
         "user=postgres "
         "password=Siddhant1512!"

@@ -9,7 +9,7 @@ import datetime
 Base = declarative_base()
 
 
-class UserRole(str, PyEnum):   # ← inherit from str so .value is the string we want in DB
+class UserRole(str, PyEnum):
     HR = "HR"
     EMPLOYEE = "EMPLOYEE"
     EXECUTIVE = "EXECUTIVE"
@@ -65,10 +65,12 @@ class AuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    action = Column(String, nullable=False)           # e.g., "ingest_document", "chat_message"
-    resource = Column(String, nullable=False)         # e.g., filename or thread_id
-    details = Column(Text, nullable=True)             # optional extra info
-    timestamp = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc).isoformat(), nullable=False)
+    action = Column(String, nullable=False)
+    resource = Column(String, nullable=False)
+    details = Column(Text, nullable=True)
+    timestamp = Column(
+    DateTime(timezone=True),
+    server_default=text("CURRENT_TIMESTAMP"), nullable=False)
 
     # Optional relationship (for easier querying later)
     user = relationship("User", backref="audit_logs")

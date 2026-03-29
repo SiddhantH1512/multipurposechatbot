@@ -2,7 +2,7 @@
 
 from typing import List
 from sqlalchemy import text
-from src.database.engine import *
+from src.database.engine import sync_engine
 
 
 _THREAD_METADATA_TABLE = "thread_metadata"

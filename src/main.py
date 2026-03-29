@@ -1,10 +1,17 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import httpx
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from backend.thread_service import delete_thread, load_conversation, retrieve_all_threads, thread_document_metadata
+from src.backend.thread_service import delete_thread, load_conversation, retrieve_all_threads, thread_document_metadata
 from src.backend.utils import add_thread, generate_thread_id, get_thread_display_name, reset_chat, set_thread_title_from_first_message
 
-API_BASE_URL = "http://127.0.0.1:8000"
+if os.getenv("DOCKER_ENV") == "true":
+    API_BASE_URL = "http://fastapi:8000"
+else:
+    API_BASE_URL = "http://127.0.0.1:8000"
 
 # ======================= Session Initialization ===================
 def init_session_state():

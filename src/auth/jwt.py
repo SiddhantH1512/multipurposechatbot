@@ -6,10 +6,11 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.auth.bcrypt_fix import create_fixed_context
 from src.database.table_models import User
 from src.database.engine import get_async_session, get_async_session_dep
 from src.config import Config
-import bcrypt  # Import bcrypt directly
+import bcrypt
 
 SECRET_KEY = Config.SECRET_KEY
 
@@ -28,11 +29,7 @@ class FixedCryptContext(CryptContext):
             raise
 
 # Create password context with bcrypt
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    bcrypt__default_rounds=12,
-    deprecated="auto"
-)
+pwd_context = create_fixed_context()
 
 # Add direct bcrypt fallback functions
 def verify_password(plain_password: str, hashed_password: str) -> bool:

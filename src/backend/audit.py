@@ -9,8 +9,10 @@ async def log_audit(
     details: str = "",
     session: AsyncSession = None
 ):
-    """Simple audit logging"""
+    """Simple audit logging with proper datetime handling"""
     try:
+        timestamp = datetime.datetime.now(datetime.timezone.utc)
+
         if session:
             # Use the provided session
             await session.execute(
@@ -23,12 +25,12 @@ async def log_audit(
                     "action": action,
                     "resource": resource,
                     "details": details[:500],
-                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    "ts": datetime.datetime.now(datetime.timezone.utc)
                 }
             )
-            await session.flush()  # Don't commit, let the caller handle it
+            await session.flush()
         else:
-            # Create a new session if none provided
+            # Fallback
             from src.database.engine import async_session_factory
             async with async_session_factory() as new_session:
                 await new_session.execute(
@@ -41,9 +43,10 @@ async def log_audit(
                         "action": action,
                         "resource": resource,
                         "details": details[:500],
-                        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        "ts": timestamp
                     }
                 )
                 await new_session.commit()
+
     except Exception as e:
         print(f"[AUDIT] Failed to log {action} for user {user_id}: {e}")
