@@ -45,27 +45,6 @@ from src.backend.self_rag import (
     MAX_QUERY_REWRITES,
 )
 
-# ── NEW: LLM Semantic Cache with Redis (Point 3A) ─────────────────────
-# from langchain_redis import RedisSemanticCache
-# from langchain_core.globals import set_llm_cache
-
-# # Embeddings (moved up so cache can use them)
-# embeddings = HuggingFaceEmbeddings(
-#     model_name="BAAI/bge-small-en-v1.5",
-#     model_kwargs={"device": "cpu"},
-#     encode_kwargs={"normalize_embeddings": True},
-# )
-
-# # LLM Semantic Cache – huge win for repeated/similar queries
-# semantic_cache = RedisSemanticCache(
-#     redis_url=Config.REDIS_URL,
-#     embeddings=embeddings,
-#     score_threshold=0.25,      # lower = more aggressive caching
-#     ttl=3600,                  # 1 hour
-# )
-# set_llm_cache(semantic_cache)
-# print("✅ LLM Semantic Cache (Redis) ENABLED – repeated queries will be instant")
-# ── LLM Semantic Cache with Redis (Lazy Initialization) ─────────────────────
 # ── LLM Semantic Cache with Redis (Lazy + Safe Initialization) ─────────────
 embeddings = HuggingFaceEmbeddings(
     model_name="BAAI/bge-small-en-v1.5",
