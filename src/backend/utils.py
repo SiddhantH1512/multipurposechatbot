@@ -3,7 +3,9 @@
 import uuid
 import streamlit as st
 from langchain_core.messages import BaseMessage, HumanMessage
-from src.backend.langgraph_backend import llm  # only if you keep LLM title generation
+def get_llm_for_title_generation():
+    from src.backend.langgraph_backend import llm
+    return llm
 
 def generate_thread_id() -> str:
     return str(uuid.uuid4())
@@ -62,6 +64,7 @@ def set_thread_title_from_first_message(thread_id: str, messages: list[BaseMessa
 def generate_chat_title(first_message: str) -> str:
     prompt = f"Summarize this chat request into a short 3-6 word title: {first_message}"
     try:
+        llm = get_llm_for_title_generation()
         title = llm.invoke(prompt).content.strip('"').strip()
         return title
     except Exception:

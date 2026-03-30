@@ -41,7 +41,7 @@ async def ingest_document(
             visibility=visibility,
             department=target_department
         )
-
+    
         # === AUDIT LOGGING (only this block added) ===
         await log_audit(
             user_id=current_user.id,
@@ -58,38 +58,3 @@ async def ingest_document(
             "uploaded_by": current_user.email,
             "visibility": visibility
         })
-    # if current_user.role != "HR":
-    #     raise HTTPException(status_code=403, detail="Only HR can ingest documents")
-
-    # if not thread_id:
-    #     raise HTTPException(status_code=400, detail="thread_id is required")
-
-    # try:
-    #     # Read file contents asynchronously
-    #     contents = await file.read()
-
-    #     # Call async ingestion function — passes the session
-    #     summary = await ingest_pdf(
-    #         file_bytes=contents,
-    #         thread_id=thread_id,
-    #         filename=file.filename,
-    #         session=session,
-    #         current_user=current_user
-    #     )
-
-    #     # Optional: If you want to do extra writes here (not needed anymore),
-    #     # you can do them in the same session — they will be committed together
-    #     # await session.execute(...)
-
-    #     # No manual commit/close needed — get_async_session handles it
-
-    #     return JSONResponse(content={
-    #         "status": "success",
-    #         "summary": summary,
-    #         "thread_id": thread_id,
-    #         "uploaded_by": current_user.email,   # optional feedback
-    #     })
-
-    # except Exception as e:
-    #     # The session will auto-rollback on exception
-    #     raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")

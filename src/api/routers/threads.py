@@ -1,44 +1,76 @@
 from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from sqlalchemy import text
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.jwt import get_current_user
-from src.backend.thread_service import load_conversation
+from src.backend.thread_service import load_conversation, thread_document_metadata
+from src.config import Config
 from src.database.engine import get_async_session_dep
 from src.database.table_models import User
+import json
+import redis.asyncio as aioredis
  
 threads_router = APIRouter(prefix="/threads", tags=["threads"], redirect_slashes=False)
- 
+
+redis_client = aioredis.from_url(Config.REDIS_URL)
+
+
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
 @threads_router.get("")
-@threads_router.get("/")
 async def list_threads(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_async_session_dep)
 ):
-    """List only threads belonging to the current user"""
+    tenant_id = getattr(current_user, "tenant_id", "default")
+    cache_key = f"threads:{tenant_id}:{current_user.id}"
+
+    cached = await redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
     result = await session.execute(
         text("""
             SELECT thread_id, filename, documents, chunks, created_at
             FROM thread_metadata
             WHERE user_id = :uid
+             AND tenant_id = :tenant_id
             ORDER BY created_at DESC
         """),
-        {"uid": current_user.id}
+        {"uid": current_user.id, "tenant_id": tenant_id}
     )
     rows = result.fetchall()
+
     threads = []
     for row in rows:
-        thread_data = {
-            "thread_id": row[0],
-            "metadata": {
-                "filename": row[1],
-                "documents": row[2],
-                "chunks": row[3],
-                "created_at": row[4]
-            } if row[1] else None
-        }
-        threads.append(thread_data)
-    return {"threads": threads}
+        thread_id = row[0]
+        metadata = thread_document_metadata(thread_id)
+        
+        threads.append({
+            "thread_id": thread_id,
+            "filename": row[1],
+            "documents": row[2],
+            "chunks": row[3],
+            "created_at": row[4],           # datetime object
+            "metadata": metadata
+        })
+
+    final = {"threads": threads}
+
+    # Serialize with custom handler for datetime
+    await redis_client.set(
+        cache_key, 
+        json.dumps(final, default=json_serial), 
+        ex=180
+    )
+    
+    return final
  
 @threads_router.get("/{thread_id}")
 async def get_conversation(

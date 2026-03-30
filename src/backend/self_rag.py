@@ -89,6 +89,9 @@ class RewrittenQuery(BaseModel):
     reasoning: str = Field(description="Why this rewrite will yield better results.")
 
 
+class FollowUpSuggestions(BaseModel):
+    suggestions: list[str] = Field(..., description="2-3 short, natural follow-up questions (max 60 chars each)")
+
 # ──────────────────────────────────────────────────────────────
 # Self-RAG state (extends the base ChatState)
 # ──────────────────────────────────────────────────────────────
@@ -98,18 +101,19 @@ class SelfRAGState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
     # Self-RAG tracking fields
-    original_query: str              # the unmodified user question
-    current_query: str               # may be rewritten
-    retrieved_context: str           # raw context from rag_tool
-    relevant_context: str            # context after relevance filtering
-    generated_answer: str            # latest draft answer
-    faithfulness_grade: str          # fully_supported | partially_supported | not_supported
-    unsupported_claims: list[str]    # claims flagged as hallucinations
-    retry_count: int                 # faithfulness retry counter
-    rewrite_count: int               # query-rewrite counter
-    need_retrieval: bool             # retrieval gate decision
-    skip_retrieval: bool             # set True when no relevant docs found
-    answer_useful: bool              # usefulness gate result
+    original_query: str
+    current_query: str
+    retrieved_context: str           
+    relevant_context: str            
+    generated_answer: str           
+    faithfulness_grade: str          
+    unsupported_claims: list[str]    
+    retry_count: int                
+    rewrite_count: int               
+    need_retrieval: bool            
+    skip_retrieval: bool   
+    answer_useful: bool  
+    follow_up_suggestions: list[str] = Field(default_factory=list)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -200,12 +204,20 @@ def build_graders(llm):
     ])
     query_rewriter = rewrite_prompt | llm.with_structured_output(RewrittenQuery)
 
+    # ── 6. Follow-up questions ───────────────────────────────
+    followup_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful policy assistant. Given the conversation history and the last answer, suggest 2-3 concise, relevant follow-up questions the user might want to ask next about company policies."),
+    ("human", "Conversation so far:\n{history}\n\nLast answer:\n{answer}")
+    ])
+    followup_chain = followup_prompt | llm.with_structured_output(FollowUpSuggestions)
+
     return {
         "retrieval_gate": retrieval_gate,
         "relevance_grader": relevance_grader,
         "faithfulness_grader": faithfulness_grader,
         "usefulness_grader": usefulness_grader,
         "query_rewriter": query_rewriter,
+        "followup_chain": followup_chain
     }
 
 
@@ -459,6 +471,14 @@ def make_query_rewrite_node(graders: dict):
 
     return query_rewrite_node
 
+
+def make_followup_node(graders: dict):
+    def node(state: SelfRAGState):
+        history = "\n".join([m.content for m in state["messages"][-6:]])
+        answer = state.get("generated_answer", "")
+        result: FollowUpSuggestions = graders["followup_chain"].invoke({"history": history, "answer": answer})
+        return {"follow_up_suggestions": result.suggestions[:3]}
+    return node
 
 # ──────────────────────────────────────────────────────────────
 # Routing / conditional edge functions

@@ -76,13 +76,9 @@ def get_stock_price(symbol: str) -> dict:
     return r.json()
 
 
-def build_rag_tool(user_department: str, user_role: str):
+def build_rag_tool(user_department: str, user_role: str, tenant_id: str = "default"):
     """
-    Returns a rag_tool instance scoped to the calling user.
-
-    Access rules:
-      - global docs  → everyone can read
-      - dept docs    → only users whose department matches OR executives/HR
+    Returns a rag_tool instance scoped to the calling user + tenant.
     """
     privileged_roles = {"HR", "EXECUTIVE"}
     is_privileged = user_role in privileged_roles
@@ -90,34 +86,35 @@ def build_rag_tool(user_department: str, user_role: str):
     @tool
     def rag_tool(query: str) -> str:
         """
-        Retrieves relevant passages from organizational documents the current
-        user is authorised to access, using hybrid (vector + BM25) search and
-        Flashrank reranking.
+        Retrieves relevant passages from organisational documents the current
+        user is authorised to access (tenant-isolated).
         """
         from src.backend.langgraph_backend import vector_store
 
-        print(f"[RAG] Query: '{query}' | user_dept={user_department} role={user_role} privileged={is_privileged}")
+        print(f"[RAG] Query: '{query}' | tenant={tenant_id} | dept={user_department} | role={user_role} | privileged={is_privileged}")
 
-        # ── Build the PGVector metadata filter ──────────────────────────────
-        # Fetch (1) all global docs + (2) dept-specific docs the user can see.
-        # PGVector filter syntax uses $or / $and operators over cmetadata keys.
+        # ── Build the PGVector metadata filter with tenant isolation ─────
         if is_privileged:
-            # HR and Executives see everything
-            pgvector_filter = None
-            print("[RAG] Privileged user — no filter applied")
+            pgvector_filter = {"tenant_id": {"$eq": tenant_id}}
+            print(f"[RAG] Privileged user — filter: tenant_id={tenant_id}")
         else:
             pgvector_filter = {
-                "$or": [
-                    {"visibility": {"$eq": "global"}},
+                "$and": [
+                    {"tenant_id": {"$eq": tenant_id}},
                     {
-                        "$and": [
-                            {"visibility": {"$eq": "dept"}},
-                            {"department": {"$eq": user_department}},
+                        "$or": [
+                            {"visibility": {"$eq": "global"}},
+                            {
+                                "$and": [
+                                    {"visibility": {"$eq": "dept"}},
+                                    {"department": {"$eq": user_department}},
+                                ]
+                            },
                         ]
-                    },
+                    }
                 ]
             }
-            print(f"[RAG] Filter: global OR (dept AND department={user_department})")
+            print(f"[RAG] Regular user — filter: tenant + (global OR dept)")
 
         # ── Fetch candidates for BM25 ────────────────────────────────────────
         try:
@@ -134,12 +131,9 @@ def build_rag_tool(user_department: str, user_role: str):
         if not all_docs:
             if is_privileged:
                 return "No organisational documents have been uploaded yet. Please contact HR."
-            return (
-                "No documents are available for your department. "
-                "If you believe this is an error, please contact HR."
-            )
+            return "No documents are available for your department."
 
-        # ── Vector retriever (with filter) ───────────────────────────────────
+        # ── Vector + BM25 ensemble (unchanged) ───────────────────────────────
         retriever_kwargs: dict = {"k": 6}
         if pgvector_filter:
             retriever_kwargs["filter"] = pgvector_filter
@@ -149,7 +143,6 @@ def build_rag_tool(user_department: str, user_role: str):
             search_kwargs=retriever_kwargs,
         )
 
-        # ── BM25 retriever (over pre-filtered pool) ──────────────────────────
         try:
             bm25_retriever = BM25Retriever.from_documents(all_docs, k=6)
         except Exception as e:
@@ -161,10 +154,8 @@ def build_rag_tool(user_department: str, user_role: str):
                 retrievers=[vector_retriever, bm25_retriever],
                 weights=[0.7, 0.3],
             )
-            print("[RAG] Using hybrid vector + BM25 ensemble")
         else:
             ensemble = vector_retriever
-            print("[RAG] Falling back to vector-only")
 
         # ── Rerank ───────────────────────────────────────────────────────────
         try:
@@ -173,11 +164,9 @@ def build_rag_tool(user_department: str, user_role: str):
                 base_retriever=ensemble,
             )
             docs = compression_retriever.invoke(query)
-            print(f"[RAG] After reranking: {len(docs)} docs")
         except Exception as e:
-            print(f"[RAG] Reranking failed: {e} — falling back to ensemble")
+            print(f"[RAG] Reranking failed: {e}")
             docs = ensemble.invoke(query)
-            print(f"[RAG] Fallback retrieval: {len(docs)} docs")
 
         if not docs:
             return "No relevant passages found in the documents you have access to."

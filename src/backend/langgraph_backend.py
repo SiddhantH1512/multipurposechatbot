@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.backend.self_rag import (
     SelfRAGState,
     build_graders,
+    make_followup_node,
     make_retrieval_gate_node,
     make_relevance_filter_node,
     make_generate_node,
@@ -44,16 +45,70 @@ from src.backend.self_rag import (
     MAX_QUERY_REWRITES,
 )
 
-load_dotenv()
+# ── NEW: LLM Semantic Cache with Redis (Point 3A) ─────────────────────
+# from langchain_redis import RedisSemanticCache
+# from langchain_core.globals import set_llm_cache
 
-# ────────────────────────────────────────────────────────────────────────
-# Embeddings & LLM
-# ────────────────────────────────────────────────────────────────────────
+# # Embeddings (moved up so cache can use them)
+# embeddings = HuggingFaceEmbeddings(
+#     model_name="BAAI/bge-small-en-v1.5",
+#     model_kwargs={"device": "cpu"},
+#     encode_kwargs={"normalize_embeddings": True},
+# )
+
+# # LLM Semantic Cache – huge win for repeated/similar queries
+# semantic_cache = RedisSemanticCache(
+#     redis_url=Config.REDIS_URL,
+#     embeddings=embeddings,
+#     score_threshold=0.25,      # lower = more aggressive caching
+#     ttl=3600,                  # 1 hour
+# )
+# set_llm_cache(semantic_cache)
+# print("✅ LLM Semantic Cache (Redis) ENABLED – repeated queries will be instant")
+# ── LLM Semantic Cache with Redis (Lazy Initialization) ─────────────────────
+# ── LLM Semantic Cache with Redis (Lazy + Safe Initialization) ─────────────
 embeddings = HuggingFaceEmbeddings(
     model_name="BAAI/bge-small-en-v1.5",
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True},
 )
+
+# ── LLM Semantic Cache with Redis (Lazy Initialization) ─────────────────────
+from langchain_redis import RedisSemanticCache
+from langchain_core.globals import set_llm_cache
+import logging
+
+logger = logging.getLogger(__name__)
+
+_semantic_cache = None
+
+def init_semantic_cache():
+    """Initialize Redis semantic cache lazily"""
+    global _semantic_cache
+    
+    if _semantic_cache is not None:
+        return _semantic_cache
+
+    try:
+        _semantic_cache = RedisSemanticCache(
+            redis_url=Config.REDIS_URL,
+            embeddings=embeddings,           # ← Now using the global embeddings
+            score_threshold=0.25,
+            ttl=3600,                        # 1 hour
+        )
+        set_llm_cache(_semantic_cache)
+        logger.info("✅ LLM Semantic Cache (Redis) initialized successfully")
+        return _semantic_cache
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to initialize Redis Semantic Cache: {e}. Running without cache.")
+        return None
+
+
+def get_semantic_cache():
+    """Helper function"""
+    return init_semantic_cache()
+
+load_dotenv()
 
 llm = ChatOpenAIModel()
 llm_with_tools = llm.bind_tools(tools)
@@ -117,24 +172,31 @@ async def ingest_pdf(
         doc_department = "General" if visibility == "global" else (department or current_user.department)
         document_id = str(uuid.uuid4())
 
+        tenant_id = getattr(current_user, "tenant_id", "default")
+
         for chunk in chunks:
             chunk.metadata.update({
-                "document_id":      document_id,
-                "visibility":       visibility,
-                "department":       doc_department,
-                "uploaded_by":      current_user.id,
+                "document_id":       document_id,
+                "tenant_id":         tenant_id,                    # ← Important
+                "visibility":        visibility,
+                "department":        doc_department,
+                "uploaded_by":       current_user.id,
                 "uploaded_by_email": current_user.email,
-                "filename":         filename,
-                "page":             chunk.metadata.get("page", 0) + 1,
-                "uploaded_at":      datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "filename":          filename,
+                "page":              chunk.metadata.get("page", 0) + 1,
+                "uploaded_at":       datetime.datetime.now(datetime.timezone.utc).isoformat(),
             })
 
         vector_store.add_documents(chunks)
 
+        # ── Insert / Update thread_metadata with tenant_id ─────────────────
         await session.execute(text("""
-            INSERT INTO thread_metadata
-            (thread_id, filename, documents, chunks, user_id, department, is_global, document_id)
-            VALUES (:thread_id, :filename, :documents, :chunks, :user_id, :dept, :is_global, :document_id)
+            INSERT INTO thread_metadata 
+            (thread_id, filename, documents, chunks, user_id, department, 
+             is_global, document_id, tenant_id)
+            VALUES 
+            (:thread_id, :filename, :documents, :chunks, :user_id, :dept, 
+             :is_global, :document_id, :tenant_id)
             ON CONFLICT (thread_id) DO UPDATE SET
                 filename    = EXCLUDED.filename,
                 documents   = EXCLUDED.documents,
@@ -143,6 +205,7 @@ async def ingest_pdf(
                 department  = EXCLUDED.department,
                 is_global   = EXCLUDED.is_global,
                 document_id = EXCLUDED.document_id,
+                tenant_id   = EXCLUDED.tenant_id,      -- ← Fixed
                 updated_at  = CURRENT_TIMESTAMP
         """), {
             "thread_id":   str(thread_id),
@@ -153,6 +216,7 @@ async def ingest_pdf(
             "dept":        current_user.department,
             "is_global":   visibility == "global",
             "document_id": document_id,
+            "tenant_id":   tenant_id,                  # ← Must be passed here
         })
 
         return {
@@ -164,6 +228,7 @@ async def ingest_pdf(
             "uploaded_by":       current_user.email,
             "document_id":       document_id,
             "target_department": department if visibility == "dept" else None,
+            "tenant_id":         tenant_id,            # ← Optional: return it for debugging
         }
     finally:
         os.unlink(temp_path)
@@ -212,6 +277,7 @@ def _build_self_rag_graph(tool_list: list, user_llm=None):
     g.add_node("increment_retry", increment_retry)
     g.add_node("usefulness", usefulness_node)
     g.add_node("query_rewrite", query_rewrite_node)
+    g.add_node("generate_followups", make_followup_node(graders))
 
     # Edges
     g.add_edge(START, "retrieval_gate")
@@ -252,11 +318,13 @@ def _build_self_rag_graph(tool_list: list, user_llm=None):
     g.add_conditional_edges(
         "usefulness",
         route_after_usefulness,
-        {"rewrite_query": "query_rewrite", "finish": END}
+        {"rewrite_query": "query_rewrite", "finish": "generate_followups"}
     )
 
     g.add_edge("query_rewrite", "agent")   # ← Loop back to agent (not directly to call_rag)
 
+    g.add_edge("generate_followups", END)
+    
     g.add_edge("direct_chat", END)
 
     return g.compile(checkpointer=checkpointer)
@@ -277,6 +345,7 @@ def build_chatbot(user: "User"):
     """
     dept = user.department or "General"
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    scoped_rag = build_rag_tool(user_department=dept, user_role=role)
+    tenant_id = getattr(user, "tenant_id", "default")
+    scoped_rag = build_rag_tool(user_department=dept, user_role=role, tenant_id=tenant_id)
     scoped_tools = [search, get_stock_price, calculator, scoped_rag, email_action_extractor]
     return _build_self_rag_graph(scoped_tools)

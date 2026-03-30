@@ -30,5 +30,6 @@ async def get_current_user_profile(current_user: User = Depends(get_current_user
         "role": current_user.role.value if hasattr(current_user.role, "value") else current_user.role,
         "department": current_user.department,
         "designation": current_user.designation,
-        "is_active": current_user.is_active
+        "is_active": current_user.is_active,
+        "tenant_id": getattr(current_user, "tenant_id", "default")
     }

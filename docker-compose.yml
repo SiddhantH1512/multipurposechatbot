@@ -48,7 +48,7 @@ services:
     volumes:
       - .:/app
       - /app/migrations/versions
-    command: uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload --workers 1
 
   streamlit:
     build:
@@ -65,7 +65,11 @@ services:
       - fastapi
     volumes:
       - .:/app
-    command: streamlit run src/main.py --server.port=8501 --server.address=0.0.0.0
+    command: streamlit run src/main.py 
+             --server.port=8501 
+             --server.address=0.0.0.0 
+             --server.runOnSave=true
+             --server.headless=true
 
 volumes:
   pgdata:

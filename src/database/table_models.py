@@ -30,6 +30,7 @@ class User(Base):
     )
     
     department = Column(String, nullable=False, default="General")
+    tenant_id = Column(String, nullable=False, default="default", index=True)
     designation = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.now(datetime.timezone.utc).isoformat())
@@ -48,6 +49,7 @@ class ThreadMetadata(Base):
     department = Column(String, nullable=False, server_default='General')
     is_global = Column(Boolean, nullable=False, server_default=text('true'))
     document_id = Column(String, nullable=True, index=True)
+    tenant_id = Column(String, nullable=False, default="default", index=True)
 
     __table_args__ = (
         sa.Index(

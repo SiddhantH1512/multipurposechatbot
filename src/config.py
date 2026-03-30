@@ -86,3 +86,6 @@ class Config:
 
     # ── File Upload ──
     MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024   # 50 MB
+
+    # ── NEW: Redis (for caching + rate limiting) ─────────────────────
+    REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")

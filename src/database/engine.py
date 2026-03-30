@@ -5,9 +5,6 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from src.database.table_models import User
 
-# Derive a sync connection string from the async one.
-# POSTGRES_CONNECTION is expected to be postgresql+asyncpg://...
-# The sync engine (used by PGVector and thread_service) needs psycopg2.
 _async_url: str = Config.POSTGRES_CONNECTION or ""
 SYNC_CONNECTION_STRING: str = (
     _async_url
@@ -84,6 +81,7 @@ async def rls_context(session: AsyncSession, user: User):
     """
     dept = user.department or "General"
     role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
+    tenant = getattr(user, "tenant_id", "default")
 
     try:
         await session.execute(
@@ -95,6 +93,9 @@ async def rls_context(session: AsyncSession, user: User):
         await session.execute(
             text(f"SET LOCAL app.current_user_id = '{user.id}'")
         )
+        await session.execute(
+            text(f"SET LOCAL app.current_tenant_id = '{tenant}'")
+            )
         print(f"[RLS] Set department={dept}, role={role_val}, user_id={user.id}")
         yield session
     finally:

@@ -1,13 +1,19 @@
+from datetime import datetime
 from typing import Optional
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.auth.jwt import get_current_user
+from src.config import Config
+import redis.asyncio as aioredis
 from src.database.engine import get_async_session_dep, sync_engine
 from src.database.table_models import User
 
 documents_router = APIRouter(prefix="/documents", tags=["documents"], redirect_slashes=False)
+
+redis_client = aioredis.from_url(Config.REDIS_URL)
 
 PRIVILEGED_ROLES = {"HR", "EXECUTIVE"}
 
@@ -16,68 +22,81 @@ def _user_role(user: User) -> str:
     return user.role.value if hasattr(user.role, "value") else str(user.role)
 
 
-# ─────────────────────────────────────────────────────────────────────
-# GET /documents  — list all documents the current user can see
-# ─────────────────────────────────────────────────────────────────────
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
 @documents_router.get("")
 async def list_documents(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_async_session_dep),
 ):
     """
-    Returns one row per distinct document_id (or filename fallback).
-    HR / EXECUTIVE see everything.
-    Others see global docs + their own department's docs.
+    Returns documents the current user can see, with Redis caching.
+    Now uses DISTINCT ON + MAX(uploaded_at) to eliminate duplicates.
     """
+    tenant_id = getattr(current_user, "tenant_id", "default")
+    cache_key = f"docs:{tenant_id}:{current_user.id}"
+
+    # Check cache first
+    cached = await redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
     role = _user_role(current_user)
     is_privileged = role in PRIVILEGED_ROLES
 
-    # langchain_pg_embedding stores metadata in the cmetadata JSONB column.
-    # We aggregate per document_id to get one row per document.
+    # Always enforce tenant isolation
+    base_filter = "WHERE cmetadata->>'tenant_id' = :tenant_id"
+
     if is_privileged:
-        filter_clause = ""
-        params: dict = {}
+        filter_clause = base_filter
+        params = {"tenant_id": tenant_id}
     else:
-        filter_clause = """
+        filter_clause = f"""
+            {base_filter}
             AND (
                 cmetadata->>'visibility' = 'global'
                 OR (
                     cmetadata->>'visibility' = 'dept'
                     AND cmetadata->>'department' = :dept
                 )
-                OR cmetadata->>'visibility' = 'confidential'
-                    AND :role IN ('HR', 'EXECUTIVE')
             )
         """
-        params = {"dept": current_user.department, "role": role}
+        params = {"tenant_id": tenant_id, "dept": current_user.department}
 
-    # Sync query — langchain_pg_embedding is only accessible via sync_engine
+    # Improved query: DISTINCT ON + MAX(uploaded_at) guarantees 1 row per document
     with sync_engine.connect() as conn:
         rows = conn.execute(
             text(f"""
-                SELECT
+                SELECT DISTINCT ON (
+                    COALESCE(cmetadata->>'document_id', cmetadata->>'filename')
+                )
                     COALESCE(cmetadata->>'document_id', cmetadata->>'filename') AS document_id,
                     cmetadata->>'filename'           AS filename,
                     cmetadata->>'visibility'         AS visibility,
                     cmetadata->>'department'         AS department,
                     cmetadata->>'uploaded_by_email'  AS uploaded_by,
-                    cmetadata->>'uploaded_at'        AS uploaded_at,
+                    MAX(cmetadata->>'uploaded_at')::timestamp AS uploaded_at,
                     COUNT(*)::int                    AS chunk_count
                 FROM langchain_pg_embedding
-                WHERE 1=1 {filter_clause}
-                GROUP BY
+                {filter_clause}
+                GROUP BY 
                     COALESCE(cmetadata->>'document_id', cmetadata->>'filename'),
                     cmetadata->>'filename',
                     cmetadata->>'visibility',
                     cmetadata->>'department',
-                    cmetadata->>'uploaded_by_email',
-                    cmetadata->>'uploaded_at'
-                ORDER BY MAX(cmetadata->>'uploaded_at') DESC NULLS LAST
+                    cmetadata->>'uploaded_by_email'
+                ORDER BY COALESCE(cmetadata->>'document_id', cmetadata->>'filename'),
+                         MAX(cmetadata->>'uploaded_at') DESC
             """),
             params,
         ).fetchall()
 
-    return {
+    result = {
         "documents": [
             {
                 "document_id": r[0],
@@ -91,6 +110,14 @@ async def list_documents(
             for r in rows
         ]
     }
+
+    # Cache with datetime support
+    await redis_client.set(
+        cache_key, 
+        json.dumps(result, default=json_serial), 
+        ex=300
+    )
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -187,6 +214,13 @@ async def update_visibility(
         },
     )
     await session.commit()
+
+    # ── INVALIDATE CACHE─────────────
+    tenant_id = getattr(current_user, "tenant_id", "default")
+    await redis_client.delete(f"docs:{tenant_id}:{current_user.id}")
+    
+    # Also clear thread list cache since metadata might have changed
+    await redis_client.delete(f"threads:{tenant_id}:{current_user.id}")
 
     return {
         "document_id":    document_id,

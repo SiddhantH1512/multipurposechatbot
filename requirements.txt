@@ -54,3 +54,6 @@ rank_bm25>=0.2.2
 groq==0.37.1
 openai==2.30.0
 alembic>=1.14.0
+langchain-redis
+redis
+pypdf

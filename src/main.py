@@ -31,7 +31,8 @@ def init_session_state():
         "ingested_docs": {},
         "thread_titles": {},
         "docs_list": None,
-        "login_counter": 0
+        "login_counter": 0,
+        "last_follow_up_suggestions": []
     }
     
     for key, default_value in defaults.items():
@@ -119,6 +120,7 @@ def show_login_screen():
                         st.session_state.user_department = user.get("department")
                         st.session_state.user_id = user.get("id")
                         st.session_state.is_hr = user.get("role") == "HR"
+                        st.session_state.user_tenant_id = user.get("tenant_id", "default")
                         
                         print(f"Login: {email} - Role: {user.get('role')} - is_hr: {st.session_state.is_hr}")
                     
@@ -185,6 +187,17 @@ def show_login_screen():
 # ======================= MAIN CHAT UI ===================
 def show_chat_ui():
     """Display the main chat interface for authenticated users"""
+    # Dynamic greeting name (moved inside the function)
+    email = st.session_state.get("user_email", "")
+    name_part = "there"
+    if email and '@' in email:
+        local_part = email.split('@')[0]
+        # Handle common patterns like "sarah.eng", "hr2", "ceo"
+        if '.' in local_part:
+            name_part = local_part.split('.')[0].title()
+        else:
+            name_part = local_part.title()
+
     st.set_page_config(page_title="PolicyIQ Chatbot", layout="wide")
     
     print(f"Current user: {st.session_state.user_email}, Role: {st.session_state.user_role}, is_hr: {st.session_state.is_hr}")
@@ -197,9 +210,11 @@ def show_chat_ui():
     st.sidebar.markdown(f"**👤 User:** `{st.session_state.user_email}`")
     st.sidebar.markdown(f"**🎭 Role:** `{st.session_state.user_role}`")
     st.sidebar.markdown(f"**🏢 Department:** `{st.session_state.user_department}`")
+    st.sidebar.markdown(f"**🏷️ Tenant ID:** `{st.session_state.get('user_tenant_id', 'default')}`")
     st.sidebar.markdown(f"**🔐 HR Status:** `{'✅ HR' if st.session_state.is_hr else '❌ Not HR'}`")
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**🔑 Thread ID:** `{thread_key[:8]}...`")
+    st.sidebar.markdown(f"**👤 Name:** {name_part}")
     
     if st.sidebar.button("➕ New Chat", use_container_width=True, key="new_chat_btn"):
         reset_chat()
@@ -509,16 +524,16 @@ def show_chat_ui():
             st.error(f"Error loading conversation: {e}")
     
     # ============================ Main Chat Area ========================
-    st.title("💬 Multi Utility Chatbot")
-    
+    st.title(f"👋 Welcome back, {name_part}! 💬 PolicyIQ")   # Dynamic greeting (also update name_part logic below)
+
     # Display chat history
     for message in st.session_state["message_history"]:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-    
+
     # Chat input
     user_input = st.chat_input("Ask about your document or use tools")
-    
+
     if user_input:
         st.session_state["message_history"].append({"role": "user", "content": user_input})
         with st.chat_message("user"):
@@ -531,23 +546,66 @@ def show_chat_ui():
             try:
                 headers = {"Authorization": f"Bearer {st.session_state.token}"}
                 with httpx.stream("POST", f"{API_BASE_URL}/chat",
-                                  data={"message": user_input, "thread_id": thread_key},
-                                  headers=headers,
-                                  timeout=300.0) as response:
+                                    data={"message": user_input, "thread_id": thread_key},
+                                    headers=headers,
+                                    timeout=300.0) as response:
                     response.raise_for_status()
                     for chunk in response.iter_text():
                         if chunk:
                             full_response += chunk
                             message_placeholder.markdown(full_response + "▌")
+                
+                # Final clean render
                 message_placeholder.markdown(full_response)
                 st.session_state["message_history"].append({"role": "assistant", "content": full_response})
+
+                # === NEW: Store follow-up suggestions for clickable buttons ===
+                # Simple parsing: look for the "Suggested follow-up questions" section
+                if "**💡 Suggested follow-up questions:**" in full_response:
+                    # Extract the suggestions (basic parsing - you can improve it)
+                    lines = full_response.split("\n")
+                    suggestions = []
+                    capture = False
+                    for line in lines:
+                        stripped = line.strip()
+                        if stripped.startswith("**💡 Suggested follow-up questions:**"):
+                            capture = True
+                            continue
+                        if capture and stripped and stripped[0].isdigit() and ". " in stripped:
+                            # Extract text after "1. "
+                            q = stripped.split(". ", 1)[1].strip()
+                            if q:
+                                suggestions.append(q)
+                    
+                    if suggestions:
+                        st.session_state["last_follow_up_suggestions"] = suggestions
+
             except Exception as e:
                 error_msg = f"❌ Error: {str(e)}"
                 message_placeholder.error(error_msg)
                 st.session_state["message_history"].append({"role": "assistant", "content": error_msg})
-        
-        # Refresh thread title via API (replaces the old chatbot.get_state() call)
+
+        # Refresh thread title
         refresh_thread_title_via_api(thread_key)
+
+    # === NEW: Clickable Follow-up Suggestions (shown below chat) ===
+    if st.session_state.get("last_follow_up_suggestions"):
+        st.markdown("**💡 Suggested follow-up questions:**")
+        cols = st.columns(min(3, len(st.session_state["last_follow_up_suggestions"])))
+        
+        for idx, question in enumerate(st.session_state["last_follow_up_suggestions"]):
+            if idx < len(cols):
+                if cols[idx].button(question, key=f"followup_btn_{thread_key}_{idx}", use_container_width=True):
+                    # Clicked → send as new user message
+                    st.session_state["message_history"].append({"role": "user", "content": question})
+                    # Clear suggestions so they don't show again immediately
+                    st.session_state["last_follow_up_suggestions"] = []
+                    st.rerun()
+
+        # Optional: Clear button
+        if st.button("Clear suggestions", key=f"clear_sugg_{thread_key}"):
+            st.session_state["last_follow_up_suggestions"] = []
+            st.rerun()
 
 # ======================= MAIN ENTRY POINT ===================
 def main():
