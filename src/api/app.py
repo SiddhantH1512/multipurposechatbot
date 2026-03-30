@@ -4,6 +4,7 @@ from src.api.routers.chat import chat_router
 from src.api.routers.threads import threads_router
 from src.api.routers.ingest import ingest_router
 from src.api.routers.documents import documents_router
+from src.api.routers.register import register_router
 
 app = FastAPI(
     title="PolicyIQ API",
@@ -17,6 +18,7 @@ app.include_router(chat_router)
 app.include_router(threads_router)
 app.include_router(ingest_router)
 app.include_router(documents_router)
+app.include_router(register_router)
 
 @app.get("/health")
 async def health_check():

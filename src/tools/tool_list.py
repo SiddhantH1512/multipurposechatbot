@@ -78,7 +78,7 @@ def get_stock_price(symbol: str) -> dict:
 
 def build_rag_tool(user_department: str, user_role: str, tenant_id: str = "default"):
     """
-    Returns a rag_tool instance scoped to the calling user + tenant.
+    Returns a rag_tool instance scoped to the calling user and tenant.
     """
     privileged_roles = {"HR", "EXECUTIVE"}
     is_privileged = user_role in privileged_roles
@@ -86,17 +86,17 @@ def build_rag_tool(user_department: str, user_role: str, tenant_id: str = "defau
     @tool
     def rag_tool(query: str) -> str:
         """
-        Retrieves relevant passages from organisational documents the current
-        user is authorised to access (tenant-isolated).
+        Retrieves relevant passages from organisational documents that the current
+        user is authorised to access, using hybrid (vector + BM25) search and
+        Flashrank reranking. Strictly scoped to the user's tenant.
         """
         from src.backend.langgraph_backend import vector_store
 
         print(f"[RAG] Query: '{query}' | tenant={tenant_id} | dept={user_department} | role={user_role} | privileged={is_privileged}")
 
-        # ── Build the PGVector metadata filter with tenant isolation ─────
+        # ── Strict tenant isolation filter ─────────────────────────────
         if is_privileged:
             pgvector_filter = {"tenant_id": {"$eq": tenant_id}}
-            print(f"[RAG] Privileged user — filter: tenant_id={tenant_id}")
         else:
             pgvector_filter = {
                 "$and": [
@@ -109,14 +109,13 @@ def build_rag_tool(user_department: str, user_role: str, tenant_id: str = "defau
                                     {"visibility": {"$eq": "dept"}},
                                     {"department": {"$eq": user_department}},
                                 ]
-                            },
+                            }
                         ]
                     }
                 ]
             }
-            print(f"[RAG] Regular user — filter: tenant + (global OR dept)")
 
-        # ── Fetch candidates for BM25 ────────────────────────────────────────
+        # ── Rest of your original code (unchanged) ─────────────────────
         try:
             fetch_kwargs = {"k": 500}
             if pgvector_filter:
@@ -133,7 +132,7 @@ def build_rag_tool(user_department: str, user_role: str, tenant_id: str = "defau
                 return "No organisational documents have been uploaded yet. Please contact HR."
             return "No documents are available for your department."
 
-        # ── Vector + BM25 ensemble (unchanged) ───────────────────────────────
+        # Vector retriever + BM25 + reranker (rest of your code remains the same)
         retriever_kwargs: dict = {"k": 6}
         if pgvector_filter:
             retriever_kwargs["filter"] = pgvector_filter
@@ -157,7 +156,6 @@ def build_rag_tool(user_department: str, user_role: str, tenant_id: str = "defau
         else:
             ensemble = vector_retriever
 
-        # ── Rerank ───────────────────────────────────────────────────────────
         try:
             compression_retriever = ContextualCompressionRetriever(
                 base_compressor=get_reranker(),
@@ -171,7 +169,7 @@ def build_rag_tool(user_department: str, user_role: str, tenant_id: str = "defau
         if not docs:
             return "No relevant passages found in the documents you have access to."
 
-        # ── Format output ────────────────────────────────────────────────────
+        # Format output (your existing code)
         context_blocks, sources = [], []
         for i, doc in enumerate(docs, 1):
             page = doc.metadata.get("page", "N/A")

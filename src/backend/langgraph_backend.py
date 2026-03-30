@@ -149,14 +149,32 @@ async def ingest_pdf(
         chunks = splitter.split_documents(docs)
 
         doc_department = "General" if visibility == "global" else (department or current_user.department)
-        document_id = str(uuid.uuid4())
-
         tenant_id = getattr(current_user, "tenant_id", "default")
+
+        # === STRONG DEDUPLICATION: remove any previous version of this exact file ===
+        await session.execute(text("""
+            DELETE FROM langchain_pg_embedding 
+            WHERE cmetadata->>'filename' = :filename 
+              AND cmetadata->>'tenant_id' = :tenant_id
+        """), {"filename": filename, "tenant_id": tenant_id})
+
+        await session.execute(text("""
+            DELETE FROM thread_metadata 
+            WHERE filename = :filename 
+              AND tenant_id = :tenant_id
+        """), {"filename": filename, "tenant_id": tenant_id})
+
+        # Commit deletes BEFORE the sync vector_store.add_documents call
+        # to prevent duplicate rows from old chunks surviving the insert
+        await session.commit()
+        # =====================================================================
+
+        document_id = str(uuid.uuid4())
 
         for chunk in chunks:
             chunk.metadata.update({
                 "document_id":       document_id,
-                "tenant_id":         tenant_id,                    # ← Important
+                "tenant_id":         tenant_id,
                 "visibility":        visibility,
                 "department":        doc_department,
                 "uploaded_by":       current_user.id,
@@ -168,7 +186,7 @@ async def ingest_pdf(
 
         vector_store.add_documents(chunks)
 
-        # ── Insert / Update thread_metadata with tenant_id ─────────────────
+        # Insert / Update thread_metadata
         await session.execute(text("""
             INSERT INTO thread_metadata 
             (thread_id, filename, documents, chunks, user_id, department, 
@@ -184,7 +202,7 @@ async def ingest_pdf(
                 department  = EXCLUDED.department,
                 is_global   = EXCLUDED.is_global,
                 document_id = EXCLUDED.document_id,
-                tenant_id   = EXCLUDED.tenant_id,      -- ← Fixed
+                tenant_id   = EXCLUDED.tenant_id,
                 updated_at  = CURRENT_TIMESTAMP
         """), {
             "thread_id":   str(thread_id),
@@ -195,8 +213,10 @@ async def ingest_pdf(
             "dept":        current_user.department,
             "is_global":   visibility == "global",
             "document_id": document_id,
-            "tenant_id":   tenant_id,                  # ← Must be passed here
+            "tenant_id":   tenant_id,
         })
+
+        await session.commit()
 
         return {
             "filename":          filename,
@@ -207,8 +227,9 @@ async def ingest_pdf(
             "uploaded_by":       current_user.email,
             "document_id":       document_id,
             "target_department": department if visibility == "dept" else None,
-            "tenant_id":         tenant_id,            # ← Optional: return it for debugging
+            "tenant_id":         tenant_id,
         }
+
     finally:
         os.unlink(temp_path)
 
@@ -319,12 +340,16 @@ chatbot = _build_self_rag_graph(tools)
 
 def build_chatbot(user: "User"):
     """
-    Returns a compiled Self-RAG chatbot graph scoped to the given user.
-    Called per-request in the chat endpoint.
+    Returns a compiled Self-RAG chatbot scoped to the user + tenant.
     """
     dept = user.department or "General"
     role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    tenant_id = getattr(user, "tenant_id", "default")
-    scoped_rag = build_rag_tool(user_department=dept, user_role=role, tenant_id=tenant_id)
+    tenant_id = getattr(user, "tenant_id", "default")   # ← Critical
+
+    scoped_rag = build_rag_tool(
+        user_department=dept,
+        user_role=role,
+        tenant_id=tenant_id          # ← Pass tenant_id
+    )
     scoped_tools = [search, get_stock_price, calculator, scoped_rag, email_action_extractor]
     return _build_self_rag_graph(scoped_tools)

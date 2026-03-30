@@ -253,6 +253,7 @@ def make_retrieval_gate_node(graders: dict):
             "faithfulness_grade": "",
             "unsupported_claims": [],
             "answer_useful": False,
+            "follow_up_suggestions": [],   # always reset at start of each turn
         }
 
     return retrieval_gate_node
@@ -474,10 +475,23 @@ def make_query_rewrite_node(graders: dict):
 
 def make_followup_node(graders: dict):
     def node(state: SelfRAGState):
+        # Don't generate follow-ups for pure conversational answers
+        # (no retrieval was done — these are greetings, small talk, etc.)
+        skip = state.get("skip_retrieval", False)
+        need_retrieval = state.get("need_retrieval", True)
+        relevant_context = state.get("relevant_context", "")
+
+        if not need_retrieval or (skip and not relevant_context):
+            return {"follow_up_suggestions": []}
+
         history = "\n".join([m.content for m in state["messages"][-6:]])
         answer = state.get("generated_answer", "")
-        result: FollowUpSuggestions = graders["followup_chain"].invoke({"history": history, "answer": answer})
-        return {"follow_up_suggestions": result.suggestions[:3]}
+        try:
+            result: FollowUpSuggestions = graders["followup_chain"].invoke({"history": history, "answer": answer})
+            return {"follow_up_suggestions": result.suggestions[:3]}
+        except Exception as e:
+            print(f"[Self-RAG] Follow-up generation failed: {e}")
+            return {"follow_up_suggestions": []}
     return node
 
 # ──────────────────────────────────────────────────────────────

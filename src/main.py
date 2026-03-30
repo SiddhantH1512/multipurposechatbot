@@ -79,19 +79,18 @@ def refresh_thread_title_via_api(thread_id: str):
         print(f"[Title refresh] Could not fetch thread {tid}: {e}")
 
 
-# ======================= LOGIN SCREEN ===================
+# ======================= LOGIN + REGISTER SCREEN ===================
 def show_login_screen():
-    """Display login screen only"""
+    """Clean login screen only (no register tab anymore)"""
     st.set_page_config(page_title="PolicyIQ - Login", layout="centered")
     
     st.title("🔐 PolicyIQ")
-    st.markdown("### Welcome to PolicyIQ Chatbot")
-    st.markdown("Please login to continue")
+    st.markdown("### Welcome to PolicyIQ Organizational Assistant")
     
     with st.form("login_form"):
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
+        submit = st.form_submit_button("Login", use_container_width=True)
         
         if submit:
             if not email or not password:
@@ -99,7 +98,6 @@ def show_login_screen():
                 return
             
             try:
-                # Step 1: Get token
                 response = httpx.post(
                     f"{API_BASE_URL}/auth/token",
                     data={"username": email, "password": password},
@@ -111,9 +109,9 @@ def show_login_screen():
                     st.session_state.user_email = email
                     st.session_state.authenticated = True
                     
-                    # Step 2: Fetch user profile
                     headers = {"Authorization": f"Bearer {st.session_state.token}"}
                     profile_resp = httpx.get(f"{API_BASE_URL}/auth/me", headers=headers, timeout=5.0)
+                    
                     if profile_resp.status_code == 200:
                         user = profile_resp.json()
                         st.session_state.user_role = user.get("role")
@@ -121,78 +119,63 @@ def show_login_screen():
                         st.session_state.user_id = user.get("id")
                         st.session_state.is_hr = user.get("role") == "HR"
                         st.session_state.user_tenant_id = user.get("tenant_id", "default")
-                        
-                        print(f"Login: {email} - Role: {user.get('role')} - is_hr: {st.session_state.is_hr}")
                     
-                    # Step 3: Fetch user's threads
-                    try:
-                        threads_resp = httpx.get(
-                            f"{API_BASE_URL}/threads",
-                            headers=headers,
-                            timeout=5.0
-                        )
-                        if threads_resp.status_code == 200:
-                            threads_data = threads_resp.json()
-                            st.session_state.chat_threads = [t["thread_id"] for t in threads_data["threads"]]
-                            for t in threads_data["threads"]:
-                                if t["metadata"]:
-                                    st.session_state.threads_metadata[t["thread_id"]] = t["metadata"]
-                    except Exception as e:
-                        print(f"Error fetching threads: {e}")
-                        st.session_state.chat_threads = []
-                    
-                    # Step 4: Create initial thread if none exists
-                    if not st.session_state.chat_threads:
-                        add_thread(st.session_state.thread_id)
-                    
-                    st.session_state.login_counter += 1
-                    
-                    st.success(f"✅ Login successful as {email} ({st.session_state.user_role})!")
+                    st.success(f"✅ Login successful!")
                     st.rerun()
                 else:
-                    error_detail = response.json().get("detail", "Invalid credentials")
-                    st.error(f"Login failed: {error_detail}")
-            except httpx.ConnectError:
-                st.error(f"❌ Cannot connect to server at {API_BASE_URL}. Make sure the backend is running.")
+                    st.error("❌ Invalid email or password")
             except Exception as e:
                 st.error(f"Connection error: {str(e)}")
-    
+
     with st.expander("📋 Demo Accounts"):
         st.markdown("""
-        **HR Users:**
-        - hr@example.com / Test@123456
-        - hr2@company.com / Test@123456
-        - hr3@company.com / Test@123456
+        **Default Password:** `Test@123456`
         
-        **Engineering:**
-        - sarah.eng@company.com / Test@123456
-        - mike.eng@company.com / Test@123456
-        - alex.eng@company.com / Test@123456
-        
-        **Sales:**
-        - lisa.sales@company.com / Test@123456
-        - john.sales@company.com / Test@123456
-        
-        **Marketing:**
-        - jessica.marketing@company.com / Test@123456
-        
-        **Finance:**
-        - robert.finance@company.com / Test@123456
-        
-        **Executive:**
-        - ceo@company.com / Test@123456
-        - cto@company.com / Test@123456
+        **HR Users (can register & manage users):**
+        - hr@company.com
+        - hr.specialist@company2.com
         """)
+
+
+def show_hr_choice_menu():
+    """HR Choice Menu after login"""
+    st.set_page_config(page_title="PolicyIQ - HR Dashboard", layout="centered")
+    
+    st.title(f"👋 Welcome back, {st.session_state.user_email.split('@')[0].title()}!")
+    st.markdown("### What would you like to do?")
+
+    col1, col2, col3 = st.columns(3, gap="large")
+
+    with col1:
+        if st.button("📝 Register New User", use_container_width=True):
+            st.session_state.hr_action = "register"
+            st.rerun()
+
+    with col2:
+        if st.button("🗑️ Manage Users", use_container_width=True):
+            st.session_state.hr_action = "manage_users"
+            st.rerun()
+
+    with col3:
+        if st.button("💬 Go to Chatbot", use_container_width=True, type="primary"):
+            st.session_state.hr_action = None
+            st.session_state.show_hr_menu = False   # ← THIS WAS MISSING
+            st.rerun()
+
+    st.markdown("---")
+    if st.button("🚪 Logout", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
 
 # ======================= MAIN CHAT UI ===================
 def show_chat_ui():
     """Display the main chat interface for authenticated users"""
-    # Dynamic greeting name (moved inside the function)
+    # Dynamic greeting name
     email = st.session_state.get("user_email", "")
     name_part = "there"
     if email and '@' in email:
         local_part = email.split('@')[0]
-        # Handle common patterns like "sarah.eng", "hr2", "ceo"
         if '.' in local_part:
             name_part = local_part.split('.')[0].title()
         else:
@@ -215,6 +198,15 @@ def show_chat_ui():
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**🔑 Thread ID:** `{thread_key[:8]}...`")
     st.sidebar.markdown(f"**👤 Name:** {name_part}")
+
+    # HR Quick Access - Back to Menu
+    if st.session_state.get("is_hr"):
+        if st.sidebar.button("← Back to HR Menu", use_container_width=True):
+            st.session_state.hr_action = None
+            st.session_state.show_hr_menu = True
+            st.rerun()
+    
+    st.sidebar.markdown("---")
     
     if st.sidebar.button("➕ New Chat", use_container_width=True, key="new_chat_btn"):
         reset_chat()
@@ -256,61 +248,67 @@ def show_chat_ui():
                 help="Which department should have access to this document?",
                 key=f"target_dept_selector_{st.session_state.login_counter}"
             )
-        
+
+        # === ONE-SHOT UPLOAD (prevents duplicates) ===
+        upload_counter = st.session_state.setdefault("upload_counter", 0)
+        upload_key = f"pdf_uploader_{st.session_state.login_counter}_{upload_counter}"
+
         uploaded_pdf = st.sidebar.file_uploader(
             "Upload HR policy document",
             type=["pdf"],
             help="Only HR users can upload organization-wide documents.",
-            key=f"pdf_uploader_{st.session_state.login_counter}"
+            key=upload_key
         )
-        
-        if uploaded_pdf:
-            if uploaded_pdf.name in thread_docs:
-                st.sidebar.info(f"`{uploaded_pdf.name}` already processed for this chat.")
-            else:
-                with st.sidebar.status("Uploading & Indexing PDF…", expanded=True) as status_box:
-                    try:
-                        files = {"file": (uploaded_pdf.name, uploaded_pdf.getvalue(), "application/pdf")}
-                        data = {
-                            "thread_id": thread_key,
-                            "visibility": visibility
-                        }
+
+        if uploaded_pdf and uploaded_pdf.name not in thread_docs:
+            with st.sidebar.status("Uploading & Indexing PDF…", expanded=True) as status_box:
+                try:
+                    files = {"file": (uploaded_pdf.name, uploaded_pdf.getvalue(), "application/pdf")}
+                    data = {
+                        "thread_id": thread_key,
+                        "visibility": visibility
+                    }
+                    if target_department:
+                        data["target_department"] = target_department
+
+                    headers = {"Authorization": f"Bearer {st.session_state.token}"}
+
+                    response = httpx.post(
+                        f"{API_BASE_URL}/ingest",
+                        files=files,
+                        data=data,
+                        headers=headers,
+                        timeout=httpx.Timeout(300.0, connect=10.0, read=300.0)
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        summary = result["summary"]
+                        summary["visibility"] = visibility
                         if target_department:
-                            data["target_department"] = target_department
-                        
-                        headers = {"Authorization": f"Bearer {st.session_state.token}"}
-                        
-                        response = httpx.post(
-                            f"{API_BASE_URL}/ingest",
-                            files=files,
-                            data=data,
-                            headers=headers,
-                            timeout=httpx.Timeout(300.0, connect=10.0, read=300.0)
+                            summary["target_department"] = target_department
+
+                        st.session_state["ingested_docs"].setdefault(thread_key, {})[uploaded_pdf.name] = summary
+
+                        status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
+                        st.sidebar.success(
+                            f"✅ Indexed `{summary.get('filename')}` "
+                            f"({summary.get('chunks')} chunks, {summary.get('documents')} pages) "
+                            f"[Visibility: {visibility}{f' → {target_department}' if target_department else ''}]"
                         )
-                        
-                        if response.status_code == 200:
-                            result = response.json()
-                            summary = result["summary"]
-                            summary["visibility"] = visibility
-                            if target_department:
-                                summary["target_department"] = target_department
-                            
-                            st.session_state["ingested_docs"].setdefault(thread_key, {})[uploaded_pdf.name] = summary
-                            
-                            status_box.update(label="✅ PDF indexed", state="complete", expanded=False)
-                            st.sidebar.success(
-                                f"✅ Indexed `{summary.get('filename')}` "
-                                f"({summary.get('chunks')} chunks, {summary.get('documents')} pages) "
-                                f"[Visibility: {visibility}{f' → {target_department}' if target_department else ''}]"
-                            )
-                        else:
-                            error_msg = response.json().get("detail", "Unknown error")
-                            status_box.update(label=f"❌ Failed: {error_msg}", state="error", expanded=True)
-                            st.sidebar.error(f"Ingestion failed: {error_msg}")
-                    
-                    except Exception as e:
-                        status_box.update(label=f"❌ Error: {str(e)}", state="error", expanded=True)
-                        st.sidebar.error(f"Upload error: {str(e)}")
+
+                        # === CRITICAL: Increment counter to reset uploader ===
+                        st.session_state.upload_counter += 1
+                        st.rerun()   # Refresh UI with new uploader key
+
+                    else:
+                        error_msg = response.json().get("detail", "Unknown error")
+                        status_box.update(label=f"❌ Failed: {error_msg}", state="error", expanded=True)
+                        st.sidebar.error(f"Ingestion failed: {error_msg}")
+
+                except Exception as e:
+                    status_box.update(label=f"❌ Error: {str(e)}", state="error", expanded=True)
+                    st.sidebar.error(f"Upload error: {str(e)}")
     
     elif not st.session_state.get("token"):
         st.sidebar.warning("⚠️ Please log in to access document upload.")
@@ -319,8 +317,8 @@ def show_chat_ui():
         st.sidebar.caption(f"Debug: User role = {st.session_state.user_role}, is_hr = {is_hr}")
 
     st.sidebar.markdown("---")
-
-    # ── Document Manager (HR) / Document Access (others) ──────────────
+    
+    # ── Document Manager (HR) / Accessible Documents (others) ──────────────
     if is_hr:
         st.sidebar.markdown("### 📋 Document Manager")
 
@@ -335,10 +333,9 @@ def show_chat_ui():
                     st.session_state["docs_list"] = r.json().get("documents", [])
                 else:
                     st.session_state["docs_list"] = []
-                    st.sidebar.error(f"Failed to load documents: {r.status_code}")
             except Exception as e:
                 st.session_state["docs_list"] = []
-                st.sidebar.error(f"Error: {e}")
+                st.sidebar.error(f"Failed to load documents: {e}")
 
         docs_list = st.session_state.get("docs_list") or []
 
@@ -448,7 +445,6 @@ def show_chat_ui():
         for thread_id in threads:
             tid = str(thread_id)
             
-            # Auto-set title using the threads API (no direct chatbot access)
             if tid not in st.session_state.get("thread_titles", {}):
                 refresh_thread_title_via_api(tid)
             
@@ -524,7 +520,7 @@ def show_chat_ui():
             st.error(f"Error loading conversation: {e}")
     
     # ============================ Main Chat Area ========================
-    st.title(f"👋 Welcome back, {name_part}! 💬 PolicyIQ")   # Dynamic greeting (also update name_part logic below)
+    st.title(f"👋 Welcome back, {name_part}! 💬 PolicyIQ")
 
     # Display chat history
     for message in st.session_state["message_history"]:
@@ -555,30 +551,25 @@ def show_chat_ui():
                             full_response += chunk
                             message_placeholder.markdown(full_response + "▌")
                 
-                # Final clean render
                 message_placeholder.markdown(full_response)
                 st.session_state["message_history"].append({"role": "assistant", "content": full_response})
 
-                # === NEW: Store follow-up suggestions for clickable buttons ===
-                # Simple parsing: look for the "Suggested follow-up questions" section
-                if "**💡 Suggested follow-up questions:**" in full_response:
-                    # Extract the suggestions (basic parsing - you can improve it)
-                    lines = full_response.split("\n")
-                    suggestions = []
-                    capture = False
-                    for line in lines:
-                        stripped = line.strip()
-                        if stripped.startswith("**💡 Suggested follow-up questions:**"):
-                            capture = True
-                            continue
-                        if capture and stripped and stripped[0].isdigit() and ". " in stripped:
-                            # Extract text after "1. "
-                            q = stripped.split(". ", 1)[1].strip()
-                            if q:
-                                suggestions.append(q)
-                    
-                    if suggestions:
-                        st.session_state["last_follow_up_suggestions"] = suggestions
+                # Parse follow-up suggestions — always update (including clearing)
+                lines = full_response.split("\n")
+                suggestions = []
+                capture = False
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith("**💡 Suggested follow-up questions:**"):
+                        capture = True
+                        continue
+                    if capture and stripped and stripped[0].isdigit() and ". " in stripped:
+                        q = stripped.split(". ", 1)[1].strip()
+                        if q:
+                            suggestions.append(q)
+
+                # Always overwrite — empty list clears stale suggestions from prior turns
+                st.session_state["last_follow_up_suggestions"] = suggestions
 
             except Exception as e:
                 error_msg = f"❌ Error: {str(e)}"
@@ -588,7 +579,7 @@ def show_chat_ui():
         # Refresh thread title
         refresh_thread_title_via_api(thread_key)
 
-    # === NEW: Clickable Follow-up Suggestions (shown below chat) ===
+    # Clickable Follow-up Suggestions
     if st.session_state.get("last_follow_up_suggestions"):
         st.markdown("**💡 Suggested follow-up questions:**")
         cols = st.columns(min(3, len(st.session_state["last_follow_up_suggestions"])))
@@ -596,23 +587,165 @@ def show_chat_ui():
         for idx, question in enumerate(st.session_state["last_follow_up_suggestions"]):
             if idx < len(cols):
                 if cols[idx].button(question, key=f"followup_btn_{thread_key}_{idx}", use_container_width=True):
-                    # Clicked → send as new user message
                     st.session_state["message_history"].append({"role": "user", "content": question})
-                    # Clear suggestions so they don't show again immediately
                     st.session_state["last_follow_up_suggestions"] = []
                     st.rerun()
 
-        # Optional: Clear button
         if st.button("Clear suggestions", key=f"clear_sugg_{thread_key}"):
             st.session_state["last_follow_up_suggestions"] = []
             st.rerun()
 
 # ======================= MAIN ENTRY POINT ===================
+def show_register_form():
+    """Register new user form for HR with validation"""
+    st.title("📝 Register New User")
+    st.caption(f"Registering for tenant: **{st.session_state.get('user_tenant_id', 'default')}**")
+
+    with st.form("register_new_user"):
+        email = st.text_input("Email Address", placeholder="john.doe@company2.com")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            role = st.selectbox("Role", ["EMPLOYEE", "INTERN", "EXECUTIVE", "HR"])
+        with col2:
+            department = st.selectbox(
+                "Department", 
+                ["Engineering", "Sales", "Marketing", "Finance", "HR", "Leadership", "General"]
+            )
+        
+        designation = st.text_input("Designation (Optional)", placeholder="Senior Software Engineer")
+        
+        password = st.text_input("Password", type="password", value="Test@123456")
+        confirm_password = st.text_input("Confirm Password", type="password")
+
+        submitted = st.form_submit_button("✅ Register User", use_container_width=True, type="primary")
+
+        if submitted:
+            if not email or not password:
+                st.error("Email and password are required")
+                return
+            
+            if password != confirm_password:
+                st.error("❌ Passwords do not match")
+                return
+            
+            if len(password.encode('utf-8')) > 72:
+                st.error("❌ Password is too long. Maximum 72 bytes (characters) allowed.")
+                return
+            
+            if len(password) < 8:
+                st.error("❌ Password must be at least 8 characters long")
+                return
+
+            try:
+                headers = {"Authorization": f"Bearer {st.session_state.token}"}
+                payload = {
+                    "email": email,
+                    "password": password,
+                    "role": role,
+                    "department": department,
+                    "designation": designation if designation else None,
+                    "tenant_id": st.session_state.get("user_tenant_id", "default")
+                }
+
+                response = httpx.post(
+                    f"{API_BASE_URL}/auth/register", 
+                    json=payload, 
+                    headers=headers, 
+                    timeout=10
+                )
+
+                if response.status_code == 201:
+                    st.success(f"🎉 User **{email}** registered successfully!")
+                    st.balloons()
+                else:
+                    error_msg = response.json().get("detail", "Registration failed")
+                    st.error(f"❌ {error_msg}")
+            except Exception as e:
+                st.error(f"Registration error: {str(e)}")
+
+    # Back button
+    if st.button("← Back to HR Menu", use_container_width=True):
+        st.session_state.hr_action = None
+        st.rerun()
+
+
+def show_manage_users():
+    """Manage / Deactivate users - HR only (Tenant-isolated)"""
+    st.set_page_config(page_title="PolicyIQ - Manage Users", layout="wide")
+    
+    st.title("🗑️ Manage Users")
+    st.caption(f"Showing users in your tenant: **{st.session_state.get('user_tenant_id', 'default')}**")
+
+    try:
+        headers = {"Authorization": f"Bearer {st.session_state.token}"}
+        
+        # Fetch users from backend (already filtered by tenant in the API)
+        resp = httpx.get(f"{API_BASE_URL}/auth/users", headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            users = resp.json().get("users", [])
+            
+            if not users:
+                st.info("No users found in your tenant.")
+            else:
+                st.write(f"**Total users in your tenant:** {len(users)}")
+                
+                for user in users:
+                    with st.expander(f"👤 {user['email']} — {user.get('role', '')} | {user.get('department', '')}"):
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown(f"**Tenant:** `{user.get('tenant_id', 'default')}`")
+                            st.markdown(f"**Designation:** {user.get('designation', '—')}")
+                            status = "✅ Active" if user.get('is_active') else "❌ Inactive"
+                            st.markdown(f"**Status:** {status}")
+                        
+                        with col2:
+                            if user.get('is_active'):
+                                if st.button("Deactivate User", key=f"deact_{user['id']}", type="secondary"):
+                                    try:
+                                        del_resp = httpx.patch(
+                                            f"{API_BASE_URL}/auth/users/{user['id']}/deactivate",
+                                            headers=headers,
+                                            timeout=8
+                                        )
+                                        if del_resp.status_code == 200:
+                                            st.success(f"✅ {user['email']} has been deactivated")
+                                            st.rerun()
+                                        else:
+                                            st.error(del_resp.json().get("detail", "Failed to deactivate"))
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)}")
+        
+        else:
+            st.error("Failed to load users. Please try again.")
+            
+    except Exception as e:
+        st.error(f"Error loading users: {str(e)}")
+
+    # Back button
+    st.markdown("---")
+    if st.button("← Back to HR Menu", use_container_width=True):
+        st.session_state.hr_action = None
+        st.rerun()
+
+
 def main():
-    """Main entry point - show login or chat UI based on authentication"""
+    """Main entry point"""
     if not st.session_state.get("authenticated", False):
         show_login_screen()
+    
+    # HR users who have not yet chosen an action → show choice menu
+    elif st.session_state.get("is_hr") and st.session_state.get("show_hr_menu", True):
+        if st.session_state.get("hr_action") == "register":
+            show_register_form()
+        elif st.session_state.get("hr_action") == "manage_users":
+            show_manage_users()
+        else:
+            show_hr_choice_menu()
+    
     else:
+        # Normal users OR HR who clicked "Go to Chatbot"
         show_chat_ui()
 
 if __name__ == "__main__":

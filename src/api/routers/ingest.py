@@ -1,5 +1,4 @@
 from typing import Optional
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from src.auth.jwt import get_current_user
@@ -9,8 +8,12 @@ from src.backend.rate_limiter import check_rate_limit
 from src.database.engine import get_async_session_dep, rls_context
 from src.database.table_models import User
 from sqlalchemy.ext.asyncio import AsyncSession
+import redis.asyncio as aioredis
+from src.config import Config
 
 ingest_router = APIRouter(prefix="/ingest", tags=["Documents"])
+
+redis_client = aioredis.from_url(Config.REDIS_URL)
 @ingest_router.post("")
 async def ingest_document(
     file: UploadFile = File(...),
@@ -41,6 +44,10 @@ async def ingest_document(
             visibility=visibility,
             department=target_department
         )
+
+        tenant_id = getattr(current_user, "tenant_id", "default")
+        await redis_client.delete(f"docs:{tenant_id}:{current_user.id}")
+        await redis_client.delete(f"threads:{tenant_id}:{current_user.id}")
     
         # === AUDIT LOGGING (only this block added) ===
         await log_audit(

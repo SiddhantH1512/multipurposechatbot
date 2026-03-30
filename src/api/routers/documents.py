@@ -35,13 +35,13 @@ async def list_documents(
     session: AsyncSession = Depends(get_async_session_dep),
 ):
     """
-    Returns documents the current user can see, with Redis caching.
-    Now uses DISTINCT ON + MAX(uploaded_at) to eliminate duplicates.
+    List documents the current user can see.
+    HR sees everything in their tenant.
     """
     tenant_id = getattr(current_user, "tenant_id", "default")
     cache_key = f"docs:{tenant_id}:{current_user.id}"
 
-    # Check cache first
+    # Check Redis cache
     cached = await redis_client.get(cache_key)
     if cached:
         return json.loads(cached)
@@ -49,15 +49,13 @@ async def list_documents(
     role = _user_role(current_user)
     is_privileged = role in PRIVILEGED_ROLES
 
-    # Always enforce tenant isolation
-    base_filter = "WHERE cmetadata->>'tenant_id' = :tenant_id"
-
+    # Always filter by tenant_id (even for HR)
     if is_privileged:
-        filter_clause = base_filter
+        filter_clause = "AND cmetadata->>'tenant_id' = :tenant_id"
         params = {"tenant_id": tenant_id}
     else:
-        filter_clause = f"""
-            {base_filter}
+        filter_clause = """
+            AND cmetadata->>'tenant_id' = :tenant_id
             AND (
                 cmetadata->>'visibility' = 'global'
                 OR (
@@ -68,30 +66,23 @@ async def list_documents(
         """
         params = {"tenant_id": tenant_id, "dept": current_user.department}
 
-    # Improved query: DISTINCT ON + MAX(uploaded_at) guarantees 1 row per document
     with sync_engine.connect() as conn:
         rows = conn.execute(
             text(f"""
-                SELECT DISTINCT ON (
-                    COALESCE(cmetadata->>'document_id', cmetadata->>'filename')
-                )
+                SELECT
                     COALESCE(cmetadata->>'document_id', cmetadata->>'filename') AS document_id,
-                    cmetadata->>'filename'           AS filename,
-                    cmetadata->>'visibility'         AS visibility,
-                    cmetadata->>'department'         AS department,
-                    cmetadata->>'uploaded_by_email'  AS uploaded_by,
-                    MAX(cmetadata->>'uploaded_at')::timestamp AS uploaded_at,
-                    COUNT(*)::int                    AS chunk_count
+                    MAX(cmetadata->>'filename')           AS filename,
+                    MAX(cmetadata->>'visibility')         AS visibility,
+                    MAX(cmetadata->>'department')         AS department,
+                    MAX(cmetadata->>'uploaded_by_email')  AS uploaded_by,
+                    MAX(cmetadata->>'uploaded_at')        AS uploaded_at,
+                    COUNT(*)::int                         AS chunk_count
                 FROM langchain_pg_embedding
-                {filter_clause}
-                GROUP BY 
-                    COALESCE(cmetadata->>'document_id', cmetadata->>'filename'),
-                    cmetadata->>'filename',
-                    cmetadata->>'visibility',
-                    cmetadata->>'department',
-                    cmetadata->>'uploaded_by_email'
-                ORDER BY COALESCE(cmetadata->>'document_id', cmetadata->>'filename'),
-                         MAX(cmetadata->>'uploaded_at') DESC
+                WHERE 1=1 
+                  {filter_clause}
+                GROUP BY
+                    COALESCE(cmetadata->>'document_id', cmetadata->>'filename')
+                ORDER BY MAX(cmetadata->>'uploaded_at') DESC NULLS LAST
             """),
             params,
         ).fetchall()
@@ -111,12 +102,8 @@ async def list_documents(
         ]
     }
 
-    # Cache with datetime support
-    await redis_client.set(
-        cache_key, 
-        json.dumps(result, default=json_serial), 
-        ex=300
-    )
+    # Cache for 5 minutes
+    await redis_client.set(cache_key, json.dumps(result), ex=300)
     return result
 
 
@@ -215,12 +202,18 @@ async def update_visibility(
     )
     await session.commit()
 
-    # ── INVALIDATE CACHE─────────────
+    # ── INVALIDATE CACHE for ALL users in this tenant ────────────────
+    # Visibility changes affect what every user can see, so we must
+    # bust every user's cached document list, not just the HR user's.
     tenant_id = getattr(current_user, "tenant_id", "default")
-    await redis_client.delete(f"docs:{tenant_id}:{current_user.id}")
-    
-    # Also clear thread list cache since metadata might have changed
-    await redis_client.delete(f"threads:{tenant_id}:{current_user.id}")
+
+    # Scan and delete all docs cache keys for this tenant
+    async for key in redis_client.scan_iter(f"docs:{tenant_id}:*"):
+        await redis_client.delete(key)
+
+    # Also bust all thread list caches for this tenant
+    async for key in redis_client.scan_iter(f"threads:{tenant_id}:*"):
+        await redis_client.delete(key)
 
     return {
         "document_id":    document_id,
