@@ -5,6 +5,7 @@
 myvenv/
 venv/
 ENV/
+eval-env/
 
 # Python cache files
 __pycache__/
@@ -13,3 +14,4 @@ __pycache__/
 # Local IDE settings
 .vscode/
 .idea/
+eval-env/

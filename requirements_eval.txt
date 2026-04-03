@@ -1,0 +1,54 @@
+# Core FastAPI + Server
+fastapi==0.135.2
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# LangChain Ecosystem
+langchain==0.3.28
+langchain-core==0.3.83
+langchain-community==0.3.31
+langchain-openai==0.3.35
+langchain-groq==0.3.8
+langchain-google-genai>=2.0.0
+langchain-huggingface==0.3.1
+langchain-postgres==0.0.17
+langchain-text-splitters==0.3.11
+
+# LangGraph
+langgraph==0.6.11
+langgraph-checkpoint-postgres==3.0.5
+langgraph-prebuilt==0.6.5
+
+# Vector Store & Embeddings
+pgvector>=0.3.0
+sentence-transformers>=3.1.0
+flashrank>=0.2.9
+
+# Database
+SQLAlchemy>=2.0.40
+psycopg[binary,pool]>=3.2.1
+psycopg2-binary>=2.9.9          # ← Added this line
+aiosqlite==0.22.1
+
+# Auth & Security
+passlib[argon2]>=1.7.4
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.1.2
+
+# Utils & Tools
+python-dotenv>=1.0.0
+httpx>=0.28.0
+pydantic>=2.10.0
+requests>=2.32.0
+tiktoken>=0.9.0
+groq==0.37.1
+openai==2.30.0
+pypdf
+langchain-redis
+ddgs==9.12.0
+
+# RAGAS Evaluation
+ragas>=0.2.0
+datasets
+pandas
+tqdm

@@ -1,0 +1,488 @@
+[
+  {
+    "id": "WM-001",
+    "policy": "HR-POL-001",
+    "question": "What are the core working hours that all employees must be available, regardless of work mode?",
+    "ground_truth": "All employees must be available from 10:00 AM to 4:00 PM IST, Monday to Friday, regardless of their work mode (on-site, hybrid, or remote).",
+    "context_key": "HR-POL-001 Section 4",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "WM-002",
+    "policy": "HR-POL-001",
+    "question": "Can a newly joined employee immediately apply for a Hybrid-Flex work mode if they are at L5 grade?",
+    "ground_truth": "No. New joiners are mandatorily on Full On-Site for the first 90 days regardless of their grade or any prior negotiations. They must also complete a minimum of 6 months in their current role before applying for a mode change.",
+    "context_key": "HR-POL-001 Section 3",
+    "difficulty": "medium",
+    "question_type": "reasoning"
+  },
+  {
+    "id": "WM-003",
+    "policy": "HR-POL-001",
+    "question": "What is the monthly connectivity allowance for remote employees — Rs. 2,500 or Rs. 3,000?",
+    "ground_truth": "There is an embedded conflict: HR-POL-001 Section 6 states Rs. 2,500/month while HR-POL-004 Section 4 states Rs. 3,000/month. HR-POL-004 takes precedence where monetary entitlements are concerned, so the correct amount is Rs. 3,000/month.",
+    "context_key": "HR-POL-001 Section 3 & HR-POL-004 Section 4",
+    "difficulty": "hard",
+    "question_type": "conflict_resolution"
+  },
+  {
+    "id": "WM-004",
+    "policy": "HR-POL-001",
+    "question": "How many violations in a quarter trigger mandatory reversion to Full On-Site mode?",
+    "ground_truth": "Three or more compliance violations in a quarter result in forced reversion to Full On-Site mode for a minimum of 6 months.",
+    "context_key": "HR-POL-001 Section 6",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "WM-005",
+    "policy": "HR-POL-001",
+    "question": "Can an employee on a Performance Improvement Plan (PIP) work in Hybrid-Standard mode?",
+    "ground_truth": "No. Employees on a Performance Improvement Plan (PIP) are automatically reverted to Full On-Site mode and must remain there until the PIP is formally closed.",
+    "context_key": "HR-POL-001 Section 3",
+    "difficulty": "medium",
+    "question_type": "yes_no_with_reasoning"
+  },
+  {
+    "id": "WM-006",
+    "policy": "HR-POL-001",
+    "question": "What is the advance notice required to submit a work mode change request via HRMS?",
+    "ground_truth": "Work mode change requests must be submitted via the HRMS portal (hrms.techcorp.in) at least 21 days in advance.",
+    "context_key": "HR-POL-001 Section 3",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "RO-001",
+    "policy": "HR-POL-002",
+    "question": "Who approves a Manpower Requisition Form (MRF) for an L5 Senior Engineer?",
+    "ground_truth": "For L4–L5 hires, the MRF is raised by the Department Head, requires L1 approval from the VP and L2 approval from the CHRO, along with a Finance sign-off for budgetary sanction.",
+    "context_key": "HR-POL-002 Section 2",
+    "difficulty": "medium",
+    "question_type": "multi-step factoid"
+  },
+  {
+    "id": "RO-002",
+    "policy": "HR-POL-002",
+    "question": "What is the SLA for completing the HR & Culture interview stage in the hiring funnel?",
+    "ground_truth": "The HR & Culture interview (Stage 4) has an SLA of 3 business days.",
+    "context_key": "HR-POL-002 Section 3",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "RO-003",
+    "policy": "HR-POL-002",
+    "question": "What variable pay percentage should a recruiter communicate to an L2 candidate — 8% or 10%?",
+    "ground_truth": "The recruiter must communicate 8% of CTC as variable pay for L1–L3 candidates. Although HR-POL-002 Section 4 mistakenly states 10%, HR-POL-004 (the governing compensation policy) and the Finance-approved Compensation Matrix (FCM-2025-Q1) both confirm 8%. HR-POL-004 takes precedence.",
+    "context_key": "HR-POL-002 Section 4 & HR-POL-004 Section 3",
+    "difficulty": "hard",
+    "question_type": "conflict_resolution"
+  },
+  {
+    "id": "RO-004",
+    "policy": "HR-POL-002",
+    "question": "What happens to a new employee's access to production systems if their BGV is still pending?",
+    "ground_truth": "If BGV clearance is pending, the employee may onboard provisionally, but access to production systems is blocked until BGV is cleared.",
+    "context_key": "HR-POL-002 Section 5",
+    "difficulty": "medium",
+    "question_type": "scenario"
+  },
+  {
+    "id": "RO-005",
+    "policy": "HR-POL-002",
+    "question": "By when must a probation extension be communicated to the employee in writing?",
+    "ground_truth": "A probation extension must be communicated to the employee in writing no later than Day 75 of their employment (i.e., before the standard 90-day probation period ends).",
+    "context_key": "HR-POL-002 Section 7",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "RO-006",
+    "policy": "HR-POL-002",
+    "question": "What is the maximum notice period buy-out TechCorp will fund for an L4 candidate joining from another company?",
+    "ground_truth": "For L1–L4, notice period buy-out is capped at 30 days' last-drawn gross salary and requires VP approval.",
+    "context_key": "HR-POL-002 Section 4",
+    "difficulty": "medium",
+    "question_type": "factoid"
+  },
+  {
+    "id": "LA-001",
+    "policy": "HR-POL-003",
+    "question": "How many Earned Leave (EL) days can an employee carry forward to the next financial year?",
+    "ground_truth": "An employee can carry forward a maximum of 45 EL days to the next financial year.",
+    "context_key": "HR-POL-003 Section 2",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "LA-002",
+    "policy": "HR-POL-003",
+    "question": "How many late arrivals in a month count as half-day Loss of Pay (LOP)?",
+    "ground_truth": "Three late marks (late by more than 30 minutes) in a single month count as a half-day LOP.",
+    "context_key": "HR-POL-003 Section 5",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "LA-003",
+    "policy": "HR-POL-003",
+    "question": "Is Casual Leave encashable at the time of separation from TechCorp?",
+    "ground_truth": "No. Casual Leave (CL) cannot be encashed. Upon separation, only accumulated Earned Leave (EL) is encashed at last-drawn basic salary. CL and Sick Leave (SL) are not encashable.",
+    "context_key": "HR-POL-003 Section 6",
+    "difficulty": "medium",
+    "question_type": "yes_no_with_reasoning"
+  },
+  {
+    "id": "LA-004",
+    "policy": "HR-POL-003",
+    "question": "An employee with a remote work arrangement misses core hours without notice for 2 days. What action is taken?",
+    "ground_truth": "The first remote core-hour no-show triggers a warning. Repeated occurrences (2–3 times in a month) result in 1 day LOP. This policy (HR-POL-003) takes precedence over HR-POL-001 for all leave accounting, so LOP applies rather than CL deduction.",
+    "context_key": "HR-POL-003 Section 5 & conflict note in Section 2",
+    "difficulty": "hard",
+    "question_type": "scenario"
+  },
+  {
+    "id": "LA-005",
+    "policy": "HR-POL-003",
+    "question": "How far in advance must an employee apply for Earned Leave exceeding 10 days?",
+    "ground_truth": "EL applications exceeding 10 days require a minimum advance notice of 15 working days.",
+    "context_key": "HR-POL-003 Section 3",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "LA-006",
+    "policy": "HR-POL-003",
+    "question": "What is the maternity leave entitlement for an employee having her third child?",
+    "ground_truth": "Maternity leave of 26 weeks is available for the first 2 children only. For a third child, the employee is not entitled to the 26-week statutory maternity leave under this policy, though they may apply for other applicable leave types.",
+    "context_key": "HR-POL-003 Section 2",
+    "difficulty": "hard",
+    "question_type": "edge_case"
+  },
+  {
+    "id": "CB-001",
+    "policy": "HR-POL-004",
+    "question": "What percentage of CTC constitutes the Basic Salary at TechCorp?",
+    "ground_truth": "Basic Salary constitutes 40% of CTC.",
+    "context_key": "HR-POL-004 Section 2",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "CB-002",
+    "policy": "HR-POL-004",
+    "question": "What is the annual increment percentage range for an employee rated 'Exceeds Expectations'?",
+    "ground_truth": "Employees rated 'Exceeds Expectations' (top 20%) receive an increment in the range of 12–17%.",
+    "context_key": "HR-POL-004 Section 5",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "CB-003",
+    "policy": "HR-POL-004",
+    "question": "An employee earns Rs. 1,20,000/month Basic. What is the employer's monthly PF contribution to the EPF account?",
+    "ground_truth": "The employer contributes 12% of PF wage, of which 3.67% goes to EPF and 8.33% to EPS. On Rs. 1,20,000 basic: EPF contribution = 3.67% × 1,20,000 = Rs. 4,404/month. Total employer PF is Rs. 14,400 (12%) but only Rs. 4,404 goes to the EPF account; the rest goes to EPS (subject to the wage ceiling).",
+    "context_key": "HR-POL-004 Section 2 & HR-POL-005 Section 2",
+    "difficulty": "hard",
+    "question_type": "calculation"
+  },
+  {
+    "id": "CB-004",
+    "policy": "HR-POL-004",
+    "question": "Within how many days must Full & Final settlement be processed after the last working day?",
+    "ground_truth": "Full & Final (F&F) settlement must be processed within 45 days of the last working day. Note: In a Board-approved mass RIF scenario, this may be extended to 60 days per HR-POL-009 Section 6.",
+    "context_key": "HR-POL-004 Section 6 & HR-POL-009 Section 6",
+    "difficulty": "medium",
+    "question_type": "factoid_with_nuance"
+  },
+  {
+    "id": "CB-005",
+    "policy": "HR-POL-004",
+    "question": "Is an employee who resigns while on a PIP eligible for variable pay for that cycle?",
+    "ground_truth": "No. Employees who resign during a PIP are not eligible for variable pay for that appraisal cycle.",
+    "context_key": "HR-POL-004 Section 6",
+    "difficulty": "medium",
+    "question_type": "yes_no_with_reasoning"
+  },
+  {
+    "id": "CB-006",
+    "policy": "HR-POL-004",
+    "question": "What market percentile does TechCorp target for compensation of critical/scarce talent roles?",
+    "ground_truth": "TechCorp targets the 75th percentile of the NASSCOM IT sector benchmark for critical and scarce talent roles.",
+    "context_key": "HR-POL-004 Section 1",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "GP-001",
+    "policy": "HR-POL-005",
+    "question": "What is the minimum service period required for gratuity eligibility at TechCorp?",
+    "ground_truth": "An employee must have completed at least 5 continuous years of service with TechCorp to be eligible for gratuity. This condition is waived in case of death or disablement.",
+    "context_key": "HR-POL-005 Section 4",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "GP-002",
+    "policy": "HR-POL-005",
+    "question": "Calculate the gratuity for an employee with 8 years of service and last drawn basic salary of Rs. 60,000/month.",
+    "ground_truth": "Gratuity = (Last Basic / 26) × 15 × Years of Service = (60,000 / 26) × 15 × 8 = 2,307.69 × 120 = Rs. 2,76,923 (approximately Rs. 2,76,923). This is well below the Rs. 20 Lakh cap.",
+    "context_key": "HR-POL-005 Section 4",
+    "difficulty": "hard",
+    "question_type": "calculation"
+  },
+  {
+    "id": "GP-003",
+    "policy": "HR-POL-005",
+    "question": "What form must an employee submit to claim gratuity upon resignation?",
+    "ground_truth": "An employee must submit Form I to claim gratuity upon resignation or retirement. In case of an employee's death, the nominee submits Form J.",
+    "context_key": "HR-POL-005 Section 5",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "GP-004",
+    "policy": "HR-POL-005",
+    "question": "Can TechCorp forfeit an employee's PF as a penalty for misconduct?",
+    "ground_truth": "No. PF cannot be forfeited under any circumstance — it is the employee's statutory right. Only gratuity may potentially be reduced (not PF) in cases of proven misconduct causing damage, subject to legal advice.",
+    "context_key": "HR-POL-005 Section 6",
+    "difficulty": "medium",
+    "question_type": "yes_no_with_reasoning"
+  },
+  {
+    "id": "GP-005",
+    "policy": "HR-POL-005",
+    "question": "What is the maximum gratuity payable under TechCorp's policy, and is there a pending update?",
+    "ground_truth": "The current statutory maximum is Rs. 20 Lakhs. Budget 2023 proposed an increase to Rs. 25 Lakhs, but as of the policy, TechCorp awaits official gazette notification before updating its payroll system. Amounts exceeding the statutory limit are paid as ex-gratia.",
+    "context_key": "HR-POL-005 Section 4",
+    "difficulty": "medium",
+    "question_type": "factoid_with_nuance"
+  },
+  {
+    "id": "EA-001",
+    "policy": "HR-POL-006",
+    "question": "What is the WFH setup allowance for an L4 Engineer approved for Hybrid-Flex mode?",
+    "ground_truth": "An L4 Engineer (L2–L5 range) is eligible for a one-time WFH Setup Allowance of Rs. 20,000. This supersedes the Rs. 15,000 cap stated in HR-POL-001 for the Engineering track; HR-POL-006 prevails.",
+    "context_key": "HR-POL-006 Section 3",
+    "difficulty": "medium",
+    "question_type": "conflict_resolution"
+  },
+  {
+    "id": "EA-002",
+    "policy": "HR-POL-006",
+    "question": "What is the on-call compensation for an L5 Engineer who works on a public holiday?",
+    "ground_truth": "On-call compensation on a public holiday is Rs. 2,500 per day.",
+    "context_key": "HR-POL-006 Section 6",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "EA-003",
+    "policy": "HR-POL-006",
+    "question": "What is the annual Learning & Development budget for an L6 Staff Engineer?",
+    "ground_truth": "An L6–L7 Engineer has an annual L&D budget of Rs. 1,00,000, covering courses and one international conference. A return bond of 12 months applies if the spend exceeds Rs. 60,000.",
+    "context_key": "HR-POL-006 Section 5",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "EA-004",
+    "policy": "HR-POL-006",
+    "question": "An SRE engineer responds to a P1 incident during on-call and works for 5 hours. What compensation do they receive?",
+    "ground_truth": "Incident response hours (P0/P1) exceeding 3 hours in an on-call shift trigger Comp-Off at 1.5x the hours worked. For 5 hours, the engineer earns 7.5 hours (rounded to nearest half-day as per HR-POL-003) of Comp-Off, which must be availed within 30 days.",
+    "context_key": "HR-POL-006 Section 6 & HR-POL-003 Section 2",
+    "difficulty": "hard",
+    "question_type": "scenario_calculation"
+  },
+  {
+    "id": "EA-005",
+    "policy": "HR-POL-006",
+    "question": "Which employees are NOT eligible for benefits under HR-POL-006?",
+    "ground_truth": "HR-POL-006 applies only to the Engineering team (Grades L2–L8, Engineering track). Non-engineering employees are not eligible for these benefits unless explicitly approved by the CHRO.",
+    "context_key": "HR-POL-006 Section 1",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "MH-001",
+    "policy": "HR-POL-007",
+    "question": "Who does the VP – Brand report to in TechCorp's Marketing hierarchy?",
+    "ground_truth": "The VP – Brand (L7) reports directly to the Chief Marketing Officer (CMO, L8).",
+    "context_key": "HR-POL-007 Section 2",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "MH-002",
+    "policy": "HR-POL-007",
+    "question": "What is the quarterly MQL bonus for a Growth Marketing Manager who exceeds the MQL target by 15%?",
+    "ground_truth": "The quarterly MQL bonus for L4–L7 Growth team members ranges from Rs. 25,000 to Rs. 1,00,000 per quarter, triggered at 110%+ of MQL target. A 15% over-achievement qualifies (115% > 110%). The exact amount within the range depends on grade and achievement level.",
+    "context_key": "HR-POL-007 Section 4",
+    "difficulty": "medium",
+    "question_type": "scenario"
+  },
+  {
+    "id": "MH-003",
+    "policy": "HR-POL-007",
+    "question": "Can total variable pay (base + Marketing incentives) for an L5 Marketing Manager exceed 20% of CTC without any approval?",
+    "ground_truth": "No. When total variable pay (base variable from HR-POL-004 at 12% CTC for L4–L5, plus Marketing-specific incentives) exceeds 20% of CTC, Finance approval is mandatory. It cannot exceed 20% without that approval.",
+    "context_key": "HR-POL-007 Section 4 & HR-POL-004 Section 3",
+    "difficulty": "hard",
+    "question_type": "conflict_resolution"
+  },
+  {
+    "id": "MH-004",
+    "policy": "HR-POL-007",
+    "question": "Who resolves performance appraisal conflicts for Content team members who have dual reporting lines?",
+    "ground_truth": "Dual-report Content team members require a joint performance review by both the Brand VP (primary) and Growth VP (secondary). The CMO acts as tiebreaker if they disagree. Compensation decisions rest solely with the primary reporting line (Brand VP).",
+    "context_key": "HR-POL-007 Section 5",
+    "difficulty": "medium",
+    "question_type": "scenario"
+  },
+  {
+    "id": "OP-001",
+    "policy": "HR-POL-008",
+    "question": "What is the payroll processing run date each month, and when is salary credited?",
+    "ground_truth": "The payroll processing run is on the 28th of each month. Salary is credited on the last working day of the month.",
+    "context_key": "HR-POL-008 Section 3",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "OP-002",
+    "policy": "HR-POL-008",
+    "question": "What disciplinary action is taken for a first instance of insubordination at TechCorp?",
+    "ground_truth": "Insubordination is classified as a Moderate infraction. The first action is a Written Warning combined with a Performance Improvement Plan (PIP).",
+    "context_key": "HR-POL-008 Section 4",
+    "difficulty": "medium",
+    "question_type": "scenario"
+  },
+  {
+    "id": "OP-003",
+    "policy": "HR-POL-008",
+    "question": "What system does TechCorp use for its Applicant Tracking System (ATS)?",
+    "ground_truth": "TechCorp uses Greenhouse as its Applicant Tracking System (ATS), owned by the Talent Acquisition team.",
+    "context_key": "HR-POL-008 Section 2",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "OP-004",
+    "policy": "HR-POL-008",
+    "question": "What is the SLA for resolving a grievance or misconduct report submitted to TechCorp HR?",
+    "ground_truth": "Grievance or misconduct reports submitted to grievance@techcorp.in receive a 24-hour acknowledgment, with a full resolution target of 15 days. The escalation authority is the CHRO.",
+    "context_key": "HR-POL-008 Section 6",
+    "difficulty": "medium",
+    "question_type": "factoid"
+  },
+  {
+    "id": "OP-005",
+    "policy": "HR-POL-008",
+    "question": "By what date must PF remittance be completed each month?",
+    "ground_truth": "PF remittance must be completed by the 15th of the following month via the ECR Portal on the EPFO website.",
+    "context_key": "HR-POL-008 Section 3",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "BCP-001",
+    "policy": "HR-POL-009",
+    "question": "Within what timeframe must HR issue an all-hands communication after a BCP trigger event?",
+    "ground_truth": "An all-hands communication must be issued within 24 hours of a BCP trigger event. The CHRO is the primary spokesperson for all employee-facing communications.",
+    "context_key": "HR-POL-009 Section 5",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "BCP-002",
+    "policy": "HR-POL-009",
+    "question": "How many 'Ready Now' successors must be identified for each L6+ role?",
+    "ground_truth": "Each L6+ role must have at least one 'Ready Now' successor and one 'Ready in 1–2 Years' successor identified in the succession plan.",
+    "context_key": "HR-POL-009 Section 3",
+    "difficulty": "easy",
+    "question_type": "factoid"
+  },
+  {
+    "id": "BCP-003",
+    "policy": "HR-POL-009",
+    "question": "In a mass retrenchment (RIF), what is the statutory retrenchment compensation per year of service?",
+    "ground_truth": "Statutory retrenchment compensation is 15 days' wages per year of service for eligible employees under the Industrial Disputes Act, 1947.",
+    "context_key": "HR-POL-009 Section 6",
+    "difficulty": "medium",
+    "question_type": "factoid"
+  },
+  {
+    "id": "BCP-004",
+    "policy": "HR-POL-009",
+    "question": "The F&F settlement SLA is 45 days per HR-POL-004. Can this be extended during a mass RIF?",
+    "ground_truth": "Yes. HR-POL-009 Section 6 states that a Board-approved RIF plan may extend F&F settlement to 60 days, but only with written employee consent. This supersedes HR-POL-004 Section 6 during declared RIF events.",
+    "context_key": "HR-POL-009 Section 6 & HR-POL-004 Section 6",
+    "difficulty": "hard",
+    "question_type": "conflict_resolution"
+  },
+  {
+    "id": "BCP-005",
+    "policy": "HR-POL-009",
+    "question": "Who owns external (media-facing) crisis communications during a BCP event?",
+    "ground_truth": "External communications, including media-facing crisis communications, are owned by the CMO (per HR-POL-007). The CHRO reviews before release and handles all employee-facing communications.",
+    "context_key": "HR-POL-009 Section 5 & HR-POL-007",
+    "difficulty": "medium",
+    "question_type": "cross_policy"
+  },
+  {
+    "id": "XP-001",
+    "policy": "HR-POL-001, HR-POL-006",
+    "question": "An L5 Engineer is approved for Full Remote. What is the total one-time WFH setup reimbursement they can claim?",
+    "ground_truth": "Under HR-POL-006 (Engineering Allowances), an L2–L5 Engineer approved for Full Remote is eligible for a one-time WFH Setup Allowance of Rs. 20,000. This supersedes the Rs. 15,000 cap in HR-POL-001 for the Engineering track. HR-POL-006 prevails.",
+    "context_key": "HR-POL-001 Section 5 & HR-POL-006 Section 3",
+    "difficulty": "hard",
+    "question_type": "cross_policy_conflict"
+  },
+  {
+    "id": "XP-002",
+    "policy": "HR-POL-002, HR-POL-005",
+    "question": "Does gratuity accrue during the 90-day probation period if an employee is terminated during probation?",
+    "ground_truth": "No. HR-POL-002 Section 7 specifies that employees terminated during probation are not eligible for severance under HR-POL-005 (Gratuity & PF) unless statutory entitlements apply. The probation period does not count towards gratuity accrual if terminated during that window.",
+    "context_key": "HR-POL-002 Section 7 & HR-POL-005 Section 6",
+    "difficulty": "hard",
+    "question_type": "cross_policy"
+  },
+  {
+    "id": "XP-003",
+    "policy": "HR-POL-003, HR-POL-006",
+    "question": "An SRE engineer earns Comp-Off during on-call. What is the maximum time they have to use it?",
+    "ground_truth": "Comp-Off earned during on-call must be availed within 30 days. This aligns with both HR-POL-006 Section 6 (on-call provisions) and HR-POL-003 Section 2 (Comp-Off carry-forward limit of 30 days).",
+    "context_key": "HR-POL-006 Section 6 & HR-POL-003 Section 2",
+    "difficulty": "medium",
+    "question_type": "cross_policy"
+  },
+  {
+    "id": "XP-004",
+    "policy": "HR-POL-004, HR-POL-007",
+    "question": "A Director-level Product Marketing employee (L6) achieves the full Product Launch Bonus of Rs. 75,000. Does their total variable still need Finance approval?",
+    "ground_truth": "HR-POL-004 sets variable pay for L6–L7 at 18% of CTC. Adding a Rs. 75,000 Product Launch Bonus from HR-POL-007 may push total variable above 20% of CTC. If it does, Finance approval is required per HR-POL-007 Section 4.",
+    "context_key": "HR-POL-004 Section 3 & HR-POL-007 Section 4",
+    "difficulty": "hard",
+    "question_type": "calculation_with_policy"
+  },
+  {
+    "id": "XP-005",
+    "policy": "HR-POL-009, HR-POL-003",
+    "question": "During a pandemic declared as a BCP event, can leave policy be modified, and who authorises it?",
+    "ground_truth": "Yes. HR-POL-009 Section 4 states that during a pandemic/health emergency, HR-driven attendance policy relaxation and leave enhancements are possible. However, these changes require Board approval and are not unilaterally decided by HR or the CHRO.",
+    "context_key": "HR-POL-009 Section 4 & HR-POL-003",
+    "difficulty": "hard",
+    "question_type": "cross_policy_governance"
+  },
+  {
+    "id": "XP-006",
+    "policy": "HR-POL-005, HR-POL-004",
+    "question": "Why might an employee's future PF liability be higher than currently calculated at TechCorp?",
+    "ground_truth": "HR-POL-005 Section 3 explains that while TechCorp currently computes PF on Basic + DA only, a 2019 Supreme Court ruling suggests that 'uniform and universal' allowances may also be included in PF wages. A legal opinion (March 2024) supports TechCorp's current position, but this is under review. If EPFO takes a broader interpretation, retrospective PF liability may arise.",
+    "context_key": "HR-POL-005 Section 3",
+    "difficulty": "hard",
+    "question_type": "analytical"
+  }
+]

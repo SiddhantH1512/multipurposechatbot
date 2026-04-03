@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RAGAS Evaluation Dashboard • PolicyIQ</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    .card:hover { transform: translateY(-4px); box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1); }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+  <div class="max-w-7xl mx-auto p-8">
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-4xl font-bold tracking-tight">RAGAS Evaluation Dashboard</h1>
+        <p class="text-gray-400 mt-1" id="report-timestamp"></p>
+      </div>
+      <input type="file" id="fileInput" accept=".json" class="hidden"/>
+      <button onclick="document.getElementById('fileInput').click()" 
+              class="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-medium flex items-center gap-2">
+        <i class="fas fa-upload"></i> Load Report
+      </button>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8" id="kpi-cards">
+      <!-- Dynamically filled by JS -->
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      <div class="bg-gray-900 rounded-2xl p-6">
+        <h3 class="text-lg font-semibold mb-4">Overall Metrics</h3>
+        <canvas id="metricsChart" height="120"></canvas>
+      </div>
+      <div class="bg-gray-900 rounded-2xl p-6">
+        <h3 class="text-lg font-semibold mb-4">Question Difficulty Distribution</h3>
+        <canvas id="difficultyChart" height="120"></canvas>
+      </div>
+    </div>
+
+    <!-- Detailed Results -->
+    <div class="bg-gray-900 rounded-2xl p-6">
+      <h3 class="text-lg font-semibold mb-4">Detailed Results</h3>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="results-table">
+          <thead>
+            <tr class="border-b border-gray-700">
+              <th class="text-left py-3 px-4">ID</th>
+              <th class="text-left py-3 px-4">Question</th>
+              <th class="text-center py-3 px-4">Faithfulness</th>
+              <th class="text-center py-3 px-4">Relevancy</th>
+              <th class="text-center py-3 px-4">Context Precision</th>
+              <th class="text-center py-3 px-4">Context Recall</th>
+              <th class="text-center py-3 px-4">Correctness</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800" id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentData = null;
+    let metricsChart = null;
+    let difficultyChart = null;
+
+    const fileInput = document.getElementById('fileInput');
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      const text = await file.text();
+      currentData = JSON.parse(text);
+      renderDashboard();
+    });
+
+    function renderDashboard() {
+      if (!currentData) return;
+
+      document.getElementById('report-timestamp').textContent = 
+        `Report generated on ${new Date(currentData.timestamp).toLocaleString()}`;
+
+      // KPI Cards
+      const metrics = currentData.metrics;
+      const kpiHTML = `
+        <div class="bg-gray-900 rounded-2xl p-6 card">
+          <p class="text-gray-400 text-sm">Faithfulness</p>
+          <p class="text-5xl font-bold text-emerald-400">${(metrics.faithfulness*100).toFixed(1)}%</p>
+        </div>
+        <div class="bg-gray-900 rounded-2xl p-6 card">
+          <p class="text-gray-400 text-sm">Answer Relevancy</p>
+          <p class="text-5xl font-bold text-blue-400">${(metrics.answer_relevancy*100).toFixed(1)}%</p>
+        </div>
+        <div class="bg-gray-900 rounded-2xl p-6 card">
+          <p class="text-gray-400 text-sm">Context Precision</p>
+          <p class="text-5xl font-bold text-violet-400">${(metrics.context_precision*100).toFixed(1)}%</p>
+        </div>
+        <div class="bg-gray-900 rounded-2xl p-6 card">
+          <p class="text-gray-400 text-sm">Context Recall</p>
+          <p class="text-5xl font-bold text-amber-400">${(metrics.context_recall*100).toFixed(1)}%</p>
+        </div>
+        <div class="bg-gray-900 rounded-2xl p-6 card">
+          <p class="text-gray-400 text-sm">Answer Correctness</p>
+          <p class="text-5xl font-bold text-rose-400">${(metrics.answer_correctness*100).toFixed(1)}%</p>
+        </div>
+      `;
+      document.getElementById('kpi-cards').innerHTML = kpiHTML;
+
+      // Metrics Chart
+      if (metricsChart) metricsChart.destroy();
+      metricsChart = new Chart(document.getElementById('metricsChart'), {
+        type: 'bar',
+        data: {
+          labels: ['Faithfulness', 'Relevancy', 'Context Precision', 'Context Recall', 'Correctness'],
+          datasets: [{
+            label: 'Score',
+            data: Object.values(metrics),
+            backgroundColor: ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444'],
+            borderRadius: 6,
+          }]
+        },
+        options: { responsive: true, plugins: { legend: { display: false } } }
+      });
+
+      // Difficulty Chart
+      const difficultyCount = {};
+      currentData.detailed_results.forEach(r => {
+        difficultyCount[r.difficulty || 'medium'] = (difficultyCount[r.difficulty || 'medium'] || 0) + 1;
+      });
+
+      if (difficultyChart) difficultyChart.destroy();
+      difficultyChart = new Chart(document.getElementById('difficultyChart'), {
+        type: 'doughnut',
+        data: {
+          labels: Object.keys(difficultyCount),
+          datasets: [{
+            data: Object.values(difficultyCount),
+            backgroundColor: ['#10b981', '#f59e0b', '#ef4444']
+          }]
+        },
+        options: { responsive: true }
+      });
+
+      // Table
+      const tbody = document.getElementById('table-body');
+      tbody.innerHTML = currentData.detailed_results.map(row => `
+        <tr class="hover:bg-gray-800/50">
+          <td class="px-4 py-3 font-mono text-xs">${row.id || '-'}</td>
+          <td class="px-4 py-3 text-sm">${row.question}</td>
+          <td class="px-4 py-3 text-center">${(row.faithfulness*100).toFixed(1)}%</td>
+          <td class="px-4 py-3 text-center">${(row.answer_relevancy*100).toFixed(1)}%</td>
+          <td class="px-4 py-3 text-center">${(row.context_precision*100).toFixed(1)}%</td>
+          <td class="px-4 py-3 text-center">${(row.context_recall*100).toFixed(1)}%</td>
+          <td class="px-4 py-3 text-center">${(row.answer_correctness*100).toFixed(1)}%</td>
+        </tr>
+      `).join('');
+    }
+  </script>
+</body>
+</html>
