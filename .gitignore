@@ -10,6 +10,7 @@ eval-env/
 # Python cache files
 __pycache__/
 *.pyc
+eval_results/
 
 # Local IDE settings
 .vscode/

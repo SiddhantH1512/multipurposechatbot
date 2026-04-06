@@ -1,4 +1,3 @@
-# src/eval/eval_graph_self_rag.py
 """
 Builds a Self-RAG graph for evaluation using the REAL production
 _build_self_rag_graph factory from langgraph_backend.
@@ -43,7 +42,7 @@ from src.tools.tool_list import (
 
 from langchain_openai import ChatOpenAI
 _eval_llm = ChatOpenAI(
-    model="gpt-4o-mini",      # or "llama-3.1-70b-versatile" if you prefer Groq
+    model="gpt-4o-mini",
     temperature=0,
     api_key=os.getenv("OPENAI_API_KEY")   # make sure this is set
 )

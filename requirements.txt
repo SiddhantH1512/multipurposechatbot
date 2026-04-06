@@ -14,6 +14,7 @@ langchain-huggingface==0.3.1
 langchain-postgres==0.0.17
 langchain-text-splitters==0.3.11
 langchain-chroma==0.2.3
+langchain-experimental
 
 # LangGraph
 langgraph==0.6.11
@@ -21,7 +22,7 @@ langgraph-checkpoint-postgres==3.0.5
 langgraph-prebuilt==0.6.5
 
 # Vector Store & Embeddings
-chromadb==0.5.23
+# chromadb==0.5.23
 sentence-transformers>=3.1.0
 flashrank>=0.2.9
 pgvector>=0.3.0

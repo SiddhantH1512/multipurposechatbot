@@ -207,10 +207,10 @@ async def evaluate_pipeline():
     })
 
     evaluator_embeddings = HuggingFaceEmbeddings(
-        model_name="BAAI/bge-small-en-v1.5",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
+    model_name="BAAI/bge-large-en-v1.5",
+    model_kwargs={"device": "cpu"},
+    encode_kwargs={"normalize_embeddings": True},
+)
 
     metrics = [
         faithfulness,

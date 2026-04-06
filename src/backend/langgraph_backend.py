@@ -26,6 +26,7 @@ from sqlalchemy import text
 from src.database.engine import *
 from sqlalchemy.ext.asyncio import AsyncSession
 
+
 # ── Self-RAG imports ─────────────────────────────────────────
 from src.backend.self_rag import (
     SelfRAGState,
@@ -45,46 +46,42 @@ from src.backend.self_rag import (
     MAX_QUERY_REWRITES,
 )
 
-# ── LLM Semantic Cache with Redis (Lazy + Safe Initialization) ─────────────
+# ────────────────────────────────────────────────────────────────────────
+# Embeddings — BAAI/bge-large-en-v1.5
+# ────────────────────────────────────────────────────────────────────────
 embeddings = HuggingFaceEmbeddings(
-    model_name="BAAI/bge-small-en-v1.5",
+    model_name="BAAI/bge-large-en-v1.5",
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True},
 )
 
-# ── LLM Semantic Cache with Redis (Lazy Initialization) ─────────────────────
+# ── LLM Semantic Cache with Redis ────────────────────────────────────────
 from langchain_redis import RedisSemanticCache
 from langchain_core.globals import set_llm_cache
 import logging
 
 logger = logging.getLogger(__name__)
-
 _semantic_cache = None
 
 def init_semantic_cache():
-    """Initialize Redis semantic cache lazily"""
     global _semantic_cache
-    
     if _semantic_cache is not None:
         return _semantic_cache
-
     try:
         _semantic_cache = RedisSemanticCache(
             redis_url=Config.REDIS_URL,
-            embeddings=embeddings,           # ← Now using the global embeddings
+            embeddings=embeddings,
             score_threshold=0.25,
-            ttl=3600,                        # 1 hour
+            ttl=3600,
         )
         set_llm_cache(_semantic_cache)
-        logger.info("✅ LLM Semantic Cache (Redis) initialized successfully")
+        logger.info("✅ LLM Semantic Cache initialized")
         return _semantic_cache
     except Exception as e:
-        logger.warning(f"⚠️ Failed to initialize Redis Semantic Cache: {e}. Running without cache.")
+        logger.warning(f"⚠️ Semantic cache unavailable: {e}")
         return None
 
-
 def get_semantic_cache():
-    """Helper function"""
     return init_semantic_cache()
 
 load_dotenv()
@@ -121,7 +118,49 @@ checkpointer = PostgresSaver(pool)
 
 
 # ────────────────────────────────────────────────────────────────────────
-# Ingestion  (unchanged)
+# Chunking — flat 800-char section-aware splits
+#
+# Why flat (not hierarchical parent-child):
+#   Parent-child retrieval was tested and caused Context Precision to drop
+#   from 0.63 → 0.56 and Context Recall from 0.54 → 0.45. The 400-char
+#   child chunks lack enough semantic context for bge-large to score them
+#   reliably, and the parent lookup added failure modes (Redis cold start,
+#   deduplication reducing coverage from k=8 to ~4-6 unique sections).
+#
+# Why 800 chars (not the original 1200):
+#   1200-char chunks split policy sections so the heading lands in one
+#   chunk and the value in the next. At 800 chars, a single numbered
+#   policy clause (eligibility + exception + condition) typically fits
+#   in one chunk, keeping the general rule and its restrictions together.
+#
+# Section-aware separators split at numbered headings and section markers
+# before falling back to paragraph/line breaks — preserving clause
+# boundaries without any embedding calls at ingest time.
+# ────────────────────────────────────────────────────────────────────────
+
+SECTION_AWARE_SEPARATORS = [
+    r"\n(?=\d+\.\d+\s)",          # "3.2 Sub-section"
+    r"\n(?=\d+\.\s+[A-Z])",       # "3. Section Title"
+    r"\n(?=Section\s+\d+)",        # "Section 4"
+    r"\n(?=[A-Z][a-z]+\s+\d+:)",  # "Stage 4:"
+    "\n\n",
+    "\n",
+    ". ",
+    " ",
+    "",
+]
+
+_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=800,
+    chunk_overlap=200,
+    separators=SECTION_AWARE_SEPARATORS,
+    is_separator_regex=True,
+    length_function=len,
+)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Ingestion — flat chunking
 # ────────────────────────────────────────────────────────────────────────
 async def ingest_pdf(
     file_bytes: bytes,
@@ -140,36 +179,27 @@ async def ingest_pdf(
         loader = PyPDFLoader(temp_path)
         docs = loader.load()
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1200,
-            chunk_overlap=300,
-            separators=["\n\n", "\n", ". ", " ", ""],
-            length_function=len,
-        )
-        chunks = splitter.split_documents(docs)
-
         doc_department = "General" if visibility == "global" else (department or current_user.department)
-        tenant_id = getattr(current_user, "tenant_id", "default")
+        tenant_id      = getattr(current_user, "tenant_id", "default")
+        document_id    = str(uuid.uuid4())
 
-        # === STRONG DEDUPLICATION: remove any previous version of this exact file ===
+        chunks = _splitter.split_documents(docs)
+        print(f"[Ingest] {filename}: {len(docs)} pages → {len(chunks)} chunks")
+
+        # Deduplication
         await session.execute(text("""
-            DELETE FROM langchain_pg_embedding 
-            WHERE cmetadata->>'filename' = :filename 
+            DELETE FROM langchain_pg_embedding
+            WHERE cmetadata->>'filename' = :filename
               AND cmetadata->>'tenant_id' = :tenant_id
         """), {"filename": filename, "tenant_id": tenant_id})
 
         await session.execute(text("""
-            DELETE FROM thread_metadata 
-            WHERE filename = :filename 
+            DELETE FROM thread_metadata
+            WHERE filename = :filename
               AND tenant_id = :tenant_id
         """), {"filename": filename, "tenant_id": tenant_id})
 
-        # Commit deletes BEFORE the sync vector_store.add_documents call
-        # to prevent duplicate rows from old chunks surviving the insert
         await session.commit()
-        # =====================================================================
-
-        document_id = str(uuid.uuid4())
 
         for chunk in chunks:
             chunk.metadata.update({
@@ -186,13 +216,12 @@ async def ingest_pdf(
 
         vector_store.add_documents(chunks)
 
-        # Insert / Update thread_metadata
         await session.execute(text("""
-            INSERT INTO thread_metadata 
-            (thread_id, filename, documents, chunks, user_id, department, 
+            INSERT INTO thread_metadata
+            (thread_id, filename, documents, chunks, user_id, department,
              is_global, document_id, tenant_id)
-            VALUES 
-            (:thread_id, :filename, :documents, :chunks, :user_id, :dept, 
+            VALUES
+            (:thread_id, :filename, :documents, :chunks, :user_id, :dept,
              :is_global, :document_id, :tenant_id)
             ON CONFLICT (thread_id) DO UPDATE SET
                 filename    = EXCLUDED.filename,
@@ -240,92 +269,60 @@ async def ingest_pdf(
 
 def _build_self_rag_graph(tool_list: list, user_llm=None):
     _llm = user_llm or llm
-    _llm_with_tools = _llm.bind_tools(tool_list)   # This is important for tool calling
+    _llm_with_tools = _llm.bind_tools(tool_list)
 
     graders = build_graders(_llm)
-
     tool_node = ToolNode(tool_list)
 
-    retrieval_gate_node = make_retrieval_gate_node(graders)
+    retrieval_gate_node   = make_retrieval_gate_node(graders)
     relevance_filter_node = make_relevance_filter_node(graders)
-    generate_node = make_generate_node(_llm_with_tools, _llm)
-    faithfulness_node = make_faithfulness_node(graders)
-    usefulness_node = make_usefulness_node(graders)
-    query_rewrite_node = make_query_rewrite_node(graders)
+    generate_node         = make_generate_node(_llm_with_tools, _llm)
+    faithfulness_node     = make_faithfulness_node(graders)
+    usefulness_node       = make_usefulness_node(graders)
+    query_rewrite_node    = make_query_rewrite_node(graders)
 
     def direct_chat_node(state: SelfRAGState):
         system = "You are a helpful organisational assistant."
         messages = [SystemMessage(content=system)] + state["messages"]
         response: AIMessage = _llm.invoke(messages)
         return {
-            "generated_answer": response.content,
-            "messages": [response],
-            "faithfulness_grade": "fully_supported",
-            "answer_useful": True,
+            "generated_answer":     response.content,
+            "messages":             [response],
+            "faithfulness_grade":   "fully_supported",
+            "answer_useful":        True,
+            "is_conflict_question": False,
         }
 
     g = StateGraph(SelfRAGState)
 
-    # Nodes
-    g.add_node("retrieval_gate", retrieval_gate_node)
-    g.add_node("agent", lambda state: {"messages": [_llm_with_tools.invoke(state["messages"])]})  # ← New agent node
-    g.add_node("call_rag", tool_node)
-    g.add_node("relevance_filter", relevance_filter_node)
-    g.add_node("generate", generate_node)
-    g.add_node("direct_chat", direct_chat_node)
-    g.add_node("faithfulness", faithfulness_node)
-    g.add_node("increment_retry", increment_retry)
-    g.add_node("usefulness", usefulness_node)
-    g.add_node("query_rewrite", query_rewrite_node)
+    g.add_node("retrieval_gate",     retrieval_gate_node)
+    g.add_node("agent",              lambda state: {"messages": [_llm_with_tools.invoke(state["messages"])]})
+    g.add_node("call_rag",           tool_node)
+    g.add_node("relevance_filter",   relevance_filter_node)
+    g.add_node("generate",           generate_node)
+    g.add_node("direct_chat",        direct_chat_node)
+    g.add_node("faithfulness",       faithfulness_node)
+    g.add_node("increment_retry",    increment_retry)
+    g.add_node("usefulness",         usefulness_node)
+    g.add_node("query_rewrite",      query_rewrite_node)
     g.add_node("generate_followups", make_followup_node(graders))
 
-    # Edges
     g.add_edge(START, "retrieval_gate")
-
-    # After gate: either go to agent (for tool calling) or direct chat
-    g.add_conditional_edges(
-        "retrieval_gate",
-        route_after_gate,
-        {
-            "call_rag": "agent",      # ← Changed: go to agent first
-            "generate": "direct_chat",
-        },
-    )
-
-    # Agent decides tool → ToolNode
-    g.add_conditional_edges(
-        "agent",
-        tools_condition,              # LangGraph's built-in condition
-        {
-            "tools": "call_rag",
-            END: "generate",          # if no tool needed
-        }
-    )
-
-    g.add_edge("call_rag", "relevance_filter")
+    g.add_conditional_edges("retrieval_gate", route_after_gate,
+                            {"call_rag": "agent", "generate": "direct_chat"})
+    g.add_conditional_edges("agent", tools_condition,
+                            {"tools": "call_rag", END: "generate"})
+    g.add_edge("call_rag",         "relevance_filter")
     g.add_edge("relevance_filter", "generate")
-
-    g.add_edge("generate", "faithfulness")
-
-    g.add_conditional_edges(
-        "faithfulness",
-        route_after_faithfulness,
-        {"retry_generate": "increment_retry", "check_usefulness": "usefulness"}
-    )
-
-    g.add_edge("increment_retry", "generate")
-
-    g.add_conditional_edges(
-        "usefulness",
-        route_after_usefulness,
-        {"rewrite_query": "query_rewrite", "finish": "generate_followups"}
-    )
-
-    g.add_edge("query_rewrite", "agent")   # ← Loop back to agent (not directly to call_rag)
-
+    g.add_edge("generate",         "faithfulness")
+    g.add_conditional_edges("faithfulness", route_after_faithfulness,
+                            {"retry_generate": "increment_retry", "check_usefulness": "usefulness"})
+    g.add_edge("increment_retry",  "generate")
+    g.add_conditional_edges("usefulness", route_after_usefulness,
+                            {"rewrite_query": "query_rewrite", "finish": "generate_followups"})
+    g.add_edge("query_rewrite",      "agent")
     g.add_edge("generate_followups", END)
-    
-    g.add_edge("direct_chat", END)
+    g.add_edge("direct_chat",        END)
 
     return g.compile(checkpointer=checkpointer)
 
@@ -334,22 +331,18 @@ def _build_self_rag_graph(tool_list: list, user_llm=None):
 # Public API
 # ────────────────────────────────────────────────────────────────────────
 
-# Default chatbot (HR-level access, used by thread_service / CLI)
 chatbot = _build_self_rag_graph(tools)
 
 
 def build_chatbot(user: "User"):
-    """
-    Returns a compiled Self-RAG chatbot scoped to the user + tenant.
-    """
-    dept = user.department or "General"
-    role = user.role.value if hasattr(user.role, "value") else str(user.role)
-    tenant_id = getattr(user, "tenant_id", "default")   # ← Critical
+    dept      = user.department or "General"
+    role      = user.role.value if hasattr(user.role, "value") else str(user.role)
+    tenant_id = getattr(user, "tenant_id", "default")
 
     scoped_rag = build_rag_tool(
         user_department=dept,
         user_role=role,
-        tenant_id=tenant_id          # ← Pass tenant_id
+        tenant_id=tenant_id,
     )
     scoped_tools = [search, get_stock_price, calculator, scoped_rag, email_action_extractor]
     return _build_self_rag_graph(scoped_tools)
