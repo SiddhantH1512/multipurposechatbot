@@ -69,6 +69,139 @@ src/
 
 ---
 
+## 🧠 System Architecture
+
+```mermaid
+flowchart TD
+
+    User["User - Employee / HR"]
+    UI["Streamlit UI - Chat + Upload"]
+
+    API["FastAPI API Gateway"]
+    Auth["JWT Authentication"]
+    RateLimit["Rate Limiter"]
+    Security["Security Layer"]
+
+    Router{"Router - Retrieval Needed?"}
+
+    LLM_Direct["LLM Response (No Retrieval)"]
+
+    Retriever["Hybrid Retriever"]
+    Relevance["Relevance Grader"]
+    Support["Support Grader"]
+    Usefulness["Usefulness Grader + Rewrite"]
+    LLM_RAG["LLM with Context"]
+
+    Retry{"Retry?"}
+
+    DB[(PostgreSQL + pgvector)]
+    RLS["Row Level Security"]
+    Metadata["Metadata JSONB"]
+
+    Upload["Document Upload"]
+    RBAC["RBAC Check"]
+    Chunking["Chunking + Embeddings"]
+    Store["Store in DB"]
+
+    User --> UI
+    UI --> API
+
+    API --> Auth
+    API --> RateLimit
+    API --> Security
+
+    API --> Router
+
+    Router -->|No| LLM_Direct
+    LLM_Direct --> API
+
+    Router -->|Yes| Retriever
+
+    Retriever --> DB
+    DB --> Retriever
+
+    Retriever --> Relevance
+    Retriever --> Support
+    Retriever --> Usefulness
+
+    Relevance --> LLM_RAG
+    Support --> LLM_RAG
+    Usefulness --> LLM_RAG
+
+    LLM_RAG --> Retry
+
+    Retry -->|Yes| Retriever
+    Retry -->|No| API
+
+    API --> UI
+    UI --> User
+
+    User --> Upload
+    Upload --> RBAC
+    RBAC --> Chunking
+    Chunking --> Store
+    Store --> DB
+
+    DB --- RLS
+    DB --- Metadata
+```
+
+## High-Level System Workflow
+
+Here's how **PolicyIQ** works end-to-end:
+
+### 1. User Interaction
+Users (Employees or HR personnel) interact with the application through the **Streamlit UI**.  
+They can ask questions naturally or upload policy/HR documents (upload functionality is visible and accessible **only to HR users**).
+
+### 2. Request Processing & Security Layers
+Every incoming request passes through the **FastAPI API Gateway**, where multiple security layers are applied sequentially:
+- **JWT Authentication**: Validates user identity using access and refresh tokens.
+- **RBAC (Role-Based Access Control)**: Ensures only users with the `HR` role can upload documents.
+- **Hierarchical Rate Limiter**: Applies different request limits based on user designation/role (Executive → Manager → Employee → Intern).
+- **Security Layer**: Performs prompt injection detection, PII redaction, and input sanitization.
+
+### 3. Intelligent Routing (Self-RAG Core)
+After passing security checks, the request enters the **LangGraph Agent**:
+
+- **Router Node**: Determines whether document retrieval is required for the query.
+  - If **no retrieval needed** → The LLM generates a direct response.
+  - If **retrieval needed** → The query proceeds to the RAG pipeline.
+
+### 4. Retrieval & Self-Reflection Loop
+When retrieval is required:
+- **Hybrid Retriever** fetches relevant chunks from **PostgreSQL + pgvector** using a combination of dense embeddings, BM25, and FlashRank reranking.
+- **Row Level Security (RLS)** automatically filters documents so users only see content they are authorized to access (global or department-specific).
+- **Self-RAG Graders** evaluate the quality of retrieval and generation:
+  - **Relevance Grader**: Checks if the retrieved documents are relevant to the query.
+  - **Support Grader**: Classifies the generated answer as **Fully Supported**, **Partially Supported**, or **Not Supported** by the context.
+  - **Usefulness Grader**: Scores answer quality and suggests an improved query if needed.
+
+- If the answer is **Partially Supported** or **Not Supported**, the system automatically **loops back** (retry) to regenerate a better, fully grounded response.
+- A configurable `max_retries` limit prevents infinite looping.
+
+### 5. Response Delivery
+The final grounded response, complete with citations from source documents, is returned through the API to the Streamlit UI.  
+All interactions are traced in **LangSmith** for observability and debugging.
+
+### 6. Document Ingestion Flow (HR Only)
+- When an HR user uploads a document:
+  - RBAC verifies permission.
+  - The document is chunked and embedded.
+  - Rich metadata (`department`, `visibility`, `uploaded_by`, etc.) is attached using the `cmetadata` JSONB field.
+  - Chunks are stored in PostgreSQL with **Row Level Security** policies enforced.
+
+---
+
+### Key Design Principles
+
+- **Defense-in-Depth Security**: Protection is applied at the API, agent, and database levels.
+- **Hallucination Reduction**: Self-RAG with support grading and retry logic ensures responses are grounded in actual documents.
+- **Organizational Compliance**: Global documents with fine-grained department isolation via RLS.
+- **Production Readiness**: Modular architecture, clean separation of concerns, and Docker support.
+
+This architecture makes PolicyIQ not just an intelligent chatbot, but a **secure, reliable, and enterprise-ready** solution for organizational policy management.
+
 ## 🚀 Key Technical Highlights
 
 - Implemented Self-RAG with multiple grader nodes and conditional edges in LangGraph  
