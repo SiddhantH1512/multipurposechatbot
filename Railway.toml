@@ -1,0 +1,36 @@
+[project]
+# Railway reads this file from your repo root.
+# Each [[services]] block maps to one Railway service.
+# Deploy order: postgres and redis first, then fastapi, then streamlit.
+
+# ── FastAPI ───────────────────────────────────────────────────────────────────
+[[services]]
+name = "fastapi"
+source = "repo"                  # build from your GitHub repo
+
+[services.build]
+dockerfile = "Dockerfile.fastapi"
+
+[services.deploy]
+# Remove --reload in production — it watches the filesystem and wastes memory.
+# Railway sets PORT automatically; we override to 8000 to match the Dockerfile.
+startCommand = "uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --workers 1"
+healthcheckPath = "/health"
+healthcheckTimeout = 300         # allow time for bge-large model to load on first boot
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# ── Streamlit ─────────────────────────────────────────────────────────────────
+[[services]]
+name = "streamlit"
+source = "repo"
+
+[services.build]
+dockerfile = "Dockerfile.streamlit"
+
+[services.deploy]
+startCommand = "streamlit run src/main.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true"
+healthcheckPath = "/_stcore/health"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
