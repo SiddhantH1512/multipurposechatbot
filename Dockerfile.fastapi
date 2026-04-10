@@ -22,34 +22,26 @@
 
 # CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim
 
-WORKDIR /app
-
-# Install system dependencies
+# Install system dependencies (needed for psycopg2, etc.)
 RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install requirements first (this layer will be cached)
+WORKDIR /app
+
+# Copy and install dependencies first (this layer is cached if requirements.txt doesn't change)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Final stage
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Copy application code
+# Copy the rest of the application code
 COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Production-ready command (no --reload)
+CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
