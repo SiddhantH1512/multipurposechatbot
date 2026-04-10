@@ -22,28 +22,34 @@
 
 # CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-FROM python:3.11-slim
+FROM python:3.11-slim AS builder
 
-# System dependencies for psycopg2, bcrypt, etc.
+WORKDIR /app
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     python3-dev \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# Install dependencies first (layer caching — only re-runs when requirements.txt changes)
+# Copy and install requirements first (this layer will be cached)
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    rm -rf /root/.cache/pip
+    pip install --no-cache-dir -r requirements.txt
+
+# Final stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY . .
 
 EXPOSE 8000
 
-# --reload is removed: it watches the filesystem for changes and is not
-# appropriate for production. Railway restarts the container on new deploys.
 CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
